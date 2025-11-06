@@ -1,0 +1,2046 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "RODCUIAPI",
+    "version": "1.0"
+  },
+  "paths": {
+    "/api/Address/{name}": {
+      "get": {
+        "tags": [
+          "Address"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/B2CLogin/contact": {
+      "post": {
+        "tags": [
+          "B2CLogin"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoidRequest"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoidRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoidRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoidRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/B2CLogin/generate-otp": {
+      "post": {
+        "tags": [
+          "B2CLogin"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpRequest"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/B2CLogin/verify-otp": {
+      "post": {
+        "tags": [
+          "B2CLogin"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpVerificationRequest"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpVerificationRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpVerificationRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpVerificationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Blob/uploadBlob": {
+      "post": {
+        "tags": [
+          "Blob"
+        ],
+        "parameters": [
+          {
+            "name": "Id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "File"
+                ],
+                "type": "object",
+                "properties": {
+                  "File": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              },
+              "encoding": {
+                "File": {
+                  "style": "form"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Blob/getBlob/{id}/{blobId}": {
+      "get": {
+        "tags": [
+          "Blob"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "blobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Blob/deleteBlob/{id}/{blobId}": {
+      "delete": {
+        "tags": [
+          "Blob"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "blobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/ExtendSession": {
+      "post": {
+        "tags": [
+          "ExtendSession"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtendSessionModel"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtendSessionModel"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtendSessionModel"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtendSessionModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Logout/{sessionId}": {
+      "post": {
+        "tags": [
+          "Logout"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Notification/SendEmail": {
+      "post": {
+        "tags": [
+          "Notification"
+        ],
+        "parameters": [
+          {
+            "name": "toAddress",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "contents",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Notification/SendSMS": {
+      "post": {
+        "tags": [
+          "Notification"
+        ],
+        "parameters": [
+          {
+            "name": "toNumber",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "msgText",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/ReferenceData/{id}": {
+      "get": {
+        "tags": [
+          "ReferenceData"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/ReferenceData": {
+      "get": {
+        "tags": [
+          "ReferenceData"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Session": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionModel"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionModel"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionModel"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Submission": {
+      "post": {
+        "tags": [
+          "Submission"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/FullFormSubmissionDto"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FullFormSubmissionDto"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FullFormSubmissionDto"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/FullFormSubmissionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AddressDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "addressType": {
+            "$ref": "#/components/schemas/DropdownItemDto"
+          },
+          "addressTypeOther": {
+            "type": "string"
+          },
+          "fullAddress": {
+            "type": "string"
+          },
+          "enteredManually": {
+            "type": "boolean"
+          },
+          "unitStreetNumber": {
+            "type": "string"
+          },
+          "streetName": {
+            "type": "string"
+          },
+          "suburb": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "postcode": {
+            "type": "string"
+          },
+          "addressAdditionalInformation": {
+            "type": "string"
+          },
+          "isHomeless": {
+            "type": "boolean"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "daysAvailability": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "daysAvailabilityOther": {
+            "type": "string"
+          },
+          "changesToAddress": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DropdownItemDto"
+            }
+          },
+          "addressNotInUseSince": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "changesToAddressOther": {
+            "type": "string"
+          },
+          "additionalInformation": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AssistingPersonDto": {
+        "required": [
+          "contact",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "contact": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankOrFinancialInstitutionDto": {
+        "required": [
+          "accountType",
+          "additionalInformation",
+          "changeReason",
+          "endDate",
+          "name",
+          "otherAccountType",
+          "otherChangeReason",
+          "otherName",
+          "startDate",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "otherName": {
+            "type": "string"
+          },
+          "accountType": {
+            "type": "string"
+          },
+          "otherAccountType": {
+            "type": "string"
+          },
+          "changeReason": {
+            "type": "string"
+          },
+          "otherChangeReason": {
+            "type": "string"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "additionalInformation": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChildrenOfInterestDto": {
+        "required": [
+          "additionalInformation",
+          "address",
+          "age",
+          "ceasedComments",
+          "childFamilyName",
+          "childFullName",
+          "childGivenName",
+          "details",
+          "differentAddressDetails",
+          "dob",
+          "frequency",
+          "frequencyOther",
+          "gender",
+          "onlineDisplayName",
+          "parentAge",
+          "parentDateOfBirth",
+          "parentFamilyname",
+          "parentGender",
+          "parentGivenname",
+          "parentPhoneNumber",
+          "reason",
+          "relationship",
+          "relationshipOther",
+          "sameAddress",
+          "type",
+          "typeOfContact"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "childGivenName": {
+            "type": "string"
+          },
+          "childFamilyName": {
+            "type": "string"
+          },
+          "childFullName": {
+            "type": "string"
+          },
+          "onlineDisplayName": {
+            "type": "string"
+          },
+          "gender": {
+            "type": "string"
+          },
+          "dob": {
+            "type": "string"
+          },
+          "age": {
+            "type": "string"
+          },
+          "frequency": {
+            "type": "string"
+          },
+          "frequencyOther": {
+            "type": "string"
+          },
+          "relationship": {
+            "type": "string"
+          },
+          "relationshipOther": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "typeOfContact": {
+            "type": "string"
+          },
+          "childDetails": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DropdownItemDto"
+            }
+          },
+          "parentDetails": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DropdownItemDto"
+            }
+          },
+          "previousContact": {
+            "type": "boolean"
+          },
+          "exemption": {
+            "type": "boolean"
+          },
+          "parentGivenname": {
+            "type": "string"
+          },
+          "parentFamilyname": {
+            "type": "string"
+          },
+          "parentDateOfBirth": {
+            "type": "string"
+          },
+          "parentAge": {
+            "type": "string"
+          },
+          "parentGender": {
+            "type": "string"
+          },
+          "parentPhoneNumber": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "sameAddress": {
+            "type": "string"
+          },
+          "differentAddressDetails": {
+            "type": "string"
+          },
+          "details": {
+            "type": "string"
+          },
+          "contactDateTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "additionalInformation": {
+            "type": "string"
+          },
+          "ceasedDate": {
+            "type": "string"
+          },
+          "occurAgain": {
+            "type": "boolean"
+          },
+          "ceasedComments": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClubOrOrganisationDto": {
+        "required": [
+          "additionalInformation",
+          "address",
+          "clubOrOrganisationType",
+          "contactNumber",
+          "name",
+          "natureOfActivities",
+          "noLongerAssociated",
+          "otherClubOrOrganisationType",
+          "postcode",
+          "startDate",
+          "state",
+          "suburb",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "suburb": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "postcode": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "clubOrOrganisationType": {
+            "type": "string"
+          },
+          "otherClubOrOrganisationType": {
+            "type": "string"
+          },
+          "natureOfActivities": {
+            "type": "string"
+          },
+          "contactNumber": {
+            "type": "string"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "noLongerAssociated": {
+            "type": "boolean"
+          },
+          "additionalInformation": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeviceBuildType": {
+        "enum": [0, 1],
+        "type": "integer",
+        "format": "int32"
+      },
+      "DeviceDto": {
+        "required": [
+          "changesToDevice",
+          "deviceModel",
+          "devicePurpose",
+          "linkedPhoneNumber",
+          "otherLoginMethod",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "deviceType": {
+            "$ref": "#/components/schemas/DropdownItemDto"
+          },
+          "deviceTypeOther": {
+            "type": "string"
+          },
+          "buildType": {
+            "$ref": "#/components/schemas/DeviceBuildType"
+          },
+          "deviceMake": {
+            "$ref": "#/components/schemas/DropdownItemDto"
+          },
+          "deviceMakeOther": {
+            "type": "string"
+          },
+          "deviceModel": {
+            "type": "string"
+          },
+          "linkedPhoneNumber": {
+            "type": "string"
+          },
+          "dateObtained": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "devicePurpose": {
+            "type": "string"
+          },
+          "devicePurposeOther": {
+            "type": "string"
+          },
+          "hasUserName": {
+            "type": "boolean"
+          },
+          "userName": {
+            "type": "string"
+          },
+          "loginMethod": {
+            "$ref": "#/components/schemas/DropdownItemDto"
+          },
+          "passwordOrPassCodePin": {
+            "type": "string"
+          },
+          "unlockPattern": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "encryptedUnlockPattern": {
+            "type": "string"
+          },
+          "unlockPatternSize": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "otherLoginMethod": {
+            "type": "string"
+          },
+          "changesToDevice": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DropdownItemDto"
+            }
+          },
+          "noLongerAccessibleSince": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "noLongerWorksSince": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "noLongerHaveSince": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deviceFixedSince": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "changesOther": {
+            "type": "string"
+          },
+          "additionalInformation": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DropdownItemDto": {
+        "required": [
+          "key",
+          "value"
+        ],
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailAddressDto": {
+        "required": [
+          "additionalInfo",
+          "changesToEmail",
+          "changesToEmailOther",
+          "emailAddress",
+          "emailAddressType",
+          "otherTypeAdditionalInfo",
+          "password",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "emailAddress": {
+            "type": "string"
+          },
+          "emailAddressType": {
+            "type": "string"
+          },
+          "otherTypeAdditionalInfo": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "changesToEmail": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DropdownItemDto"
+            }
+          },
+          "changesToEmailOther": {
+            "type": "string"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "additionalInfo": {
+            "type": "string"
+          },
+          "prefferedContactEmail": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmploymentPracticalDto": {
+        "required": [
+          "additionalInformation",
+          "address",
+          "courseAdditionalInformation",
+          "courseName",
+          "coursePostcode",
+          "courseReportingOption",
+          "courseState",
+          "courseStreetAddress",
+          "courseSuburb",
+          "employerName",
+          "employmentType",
+          "estimatedCourseLength",
+          "mainDuties",
+          "occupation",
+          "occupationAdditionalInfo",
+          "otherDayOptionAdditionalInfo",
+          "otherEmploymentTypeAdditionalInfo",
+          "otherRosterAdditionalInfo",
+          "otherStudyModeAdditionalInformation",
+          "postcode",
+          "reportType",
+          "rosterType",
+          "selectedDayOptions",
+          "state",
+          "studyMode",
+          "suburb",
+          "supervisorName",
+          "supervisorNumber",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "employerName": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "suburb": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "postcode": {
+            "type": "string"
+          },
+          "occupation": {
+            "type": "string"
+          },
+          "occupationAdditionalInfo": {
+            "type": "string"
+          },
+          "rosterType": {
+            "type": "string"
+          },
+          "otherRosterAdditionalInfo": {
+            "type": "string"
+          },
+          "otherDayOptionAdditionalInfo": {
+            "type": "string"
+          },
+          "employmentType": {
+            "type": "string"
+          },
+          "otherEmploymentTypeAdditionalInfo": {
+            "type": "string"
+          },
+          "supervisorName": {
+            "type": "string"
+          },
+          "supervisorNumber": {
+            "type": "string"
+          },
+          "mainDuties": {
+            "type": "string"
+          },
+          "selectedDayOptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "additionalInformation": {
+            "type": "string"
+          },
+          "courseReportingOption": {
+            "type": "string"
+          },
+          "courseName": {
+            "type": "string"
+          },
+          "studyMode": {
+            "type": "string"
+          },
+          "otherStudyModeAdditionalInformation": {
+            "type": "string"
+          },
+          "courseStreetAddress": {
+            "type": "string"
+          },
+          "courseSuburb": {
+            "type": "string"
+          },
+          "courseState": {
+            "type": "string"
+          },
+          "coursePostcode": {
+            "type": "string"
+          },
+          "courseStartDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "estimatedCourseLength": {
+            "type": "string"
+          },
+          "courseAdditionalInformation": {
+            "type": "string"
+          },
+          "reportType": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExtendSessionModel": {
+        "required": [
+          "geolocation",
+          "id",
+          "navigator"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "startDateTime": {
+            "type": "string"
+          },
+          "navigator": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "geolocation": {
+            "$ref": "#/components/schemas/GeolocationDto"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FileDetailsDto": {
+        "required": [
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ForeignCitizenshipDto": {
+        "required": [
+          "additionalInformation",
+          "country",
+          "obtainMethod",
+          "otherObtainMethod",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "obtainMethod": {
+            "type": "string"
+          },
+          "otherObtainMethod": {
+            "type": "string"
+          },
+          "additionalInformation": {
+            "type": "string"
+          },
+          "photo1": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FormDataDto": {
+        "type": "object",
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddressDto"
+            }
+          },
+          "banksOrFinancialInstitutions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BankOrFinancialInstitutionDto"
+            }
+          },
+          "childrenOfInterest": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChildrenOfInterestDto"
+            }
+          },
+          "employmentPractical": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmploymentPracticalDto"
+            }
+          },
+          "foundGuilty": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FoundGuiltyInForeignDto"
+            }
+          },
+          "vehicles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VehicleDto"
+            }
+          },
+          "emails": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmailAddressDto"
+            }
+          },
+          "clubsOrOrganisations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClubOrOrganisationDto"
+            }
+          },
+          "foreignCitizenships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ForeignCitizenshipDto"
+            }
+          },
+          "govCustody": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GovCustodyDto"
+            }
+          },
+          "internetServiceProviders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InternetServiceProviderDto"
+            }
+          },
+          "internetAccounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InternetAccountDto"
+            }
+          },
+          "name": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NameDobGenderChangeDto"
+            }
+          },
+          "passports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PassportDto"
+            }
+          },
+          "scars": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScarMarksDto"
+            }
+          },
+          "tattoos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TattooDto"
+            }
+          },
+          "telephone": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TelephoneDto"
+            }
+          },
+          "device": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceDto"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "FoundGuiltyInForeignDto": {
+        "required": [
+          "additionalInformation",
+          "foundGuiltyType",
+          "otherGuiltyType",
+          "state",
+          "whatOffence"
+        ],
+        "type": "object",
+        "properties": {
+          "foundGuiltyType": {
+            "type": "string"
+          },
+          "otherGuiltyType": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "incidentDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "whatOffence": {
+            "type": "string"
+          },
+          "additionalInformation": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FullFormSubmissionDto": {
+        "required": [
+          "blobId",
+          "browser",
+          "email",
+          "fileDetails",
+          "formData",
+          "geolocation",
+          "id",
+          "name",
+          "phone",
+          "surName"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "submitDateTime": {
+            "type": "string"
+          },
+          "ncosId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "surName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "formData": {
+            "$ref": "#/components/schemas/FormDataDto"
+          },
+          "declarationAccepted": {
+            "type": "boolean"
+          },
+          "assistedBy": {
+            "$ref": "#/components/schemas/AssistingPersonDto"
+          },
+          "selfCompleted": {
+            "type": "boolean"
+          },
+          "blobId": {
+            "type": "string"
+          },
+          "browser": {
+            "type": "string"
+          },
+          "geolocation": {
+            "$ref": "#/components/schemas/GeolocationDto"
+          },
+          "fileDetails": {
+            "$ref": "#/components/schemas/FileDetailsDto"
+          }
+        },
+        "additionalProperties": false
+      },
+      "GeolocationDto": {
+        "type": "object",
+        "properties": {
+          "latitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "accuracy": {
+            "type": "number",
+            "format": "double"
+          },
+          "altitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "altitudeAccuracy": {
+            "type": "number",
+            "format": "double"
+          },
+          "heading": {
+            "type": "number",
+            "format": "double"
+          },
+          "speed": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "GovCustodyDto": {
+        "type": "object",
+        "properties": {
+          "reportingOption": {
+            "type": "string"
+          },
+          "releaseDate": {
+            "type": "string"
+          },
+          "contactNumber": {
+            "type": "string"
+          },
+          "streetAddress": {
+            "type": "string"
+          },
+          "addressSuburbOrLocality": {
+            "type": "string"
+          },
+          "addressState": {
+            "type": "string"
+          },
+          "addressPostcode": {
+            "type": "string"
+          },
+          "locationOfCustody": {
+            "type": "string"
+          },
+          "emailAddress": {
+            "type": "string"
+          },
+          "custodyReleaseDate": {
+            "type": "string"
+          },
+          "custodyType": {
+            "type": "string"
+          },
+          "custodyTypeAdditionalInfo": {
+            "type": "string"
+          },
+          "additionalInformation": {
+            "type": "string"
+          },
+          "outsideAustralia": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InternetAccountDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "internetAccountType": {
+            "type": "string"
+          },
+          "accountTypeAdditionalInfo": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "screenName": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "nameWebsiteAppUrl": {
+            "type": "string"
+          },
+          "isDifferentScreenName": {
+            "type": "boolean"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "additionalInfo": {
+            "type": "string"
+          },
+          "oldUsername": {
+            "type": "string"
+          },
+          "changesToReport": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "InternetServiceProviderDto": {
+        "required": [
+          "additionalInformation",
+          "associationType",
+          "otherAssociationType",
+          "otherProviderName",
+          "password",
+          "providerName",
+          "type",
+          "unknownProviderName",
+          "username"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "providerName": {
+            "type": "string"
+          },
+          "otherProviderName": {
+            "type": "string"
+          },
+          "unknownProviderName": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "associationType": {
+            "type": "string"
+          },
+          "otherAssociationType": {
+            "type": "string"
+          },
+          "additionalInformation": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NameDobGenderChangeDto": {
+        "required": [
+          "additionalInfo",
+          "firstName",
+          "gender",
+          "lastName",
+          "onlineName",
+          "otherName",
+          "reason",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "isPreferred": {
+            "type": "boolean"
+          },
+          "onlineName": {
+            "type": "string"
+          },
+          "otherName": {
+            "type": "string"
+          },
+          "additionalInfo": {
+            "type": "string"
+          },
+          "newDob": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dobStartDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "gender": {
+            "type": "string"
+          },
+          "genderChangeDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "photo1": {
+            "type": "string"
+          },
+          "photo2": {
+            "type": "string"
+          },
+          "photo3": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "OtpRequest": {
+        "type": "object",
+        "properties": {
+          "ncosid": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "OtpVerificationRequest": {
+        "type": "object",
+        "properties": {
+          "ncosid": {
+            "type": "string"
+          },
+          "otp": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PassportDto": {
+        "required": [
+          "additionalInformation",
+          "changesToPassport",
+          "changesToPassportOther",
+          "familyOrSurname",
+          "firstName",
+          "issuingCountry",
+          "middleName",
+          "passportNumber",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "middleName": {
+            "type": "string"
+          },
+          "familyOrSurname": {
+            "type": "string"
+          },
+          "issuingCountry": {
+            "type": "string"
+          },
+          "passportNumber": {
+            "type": "string"
+          },
+          "dateOfIssue": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dateOfExpiry": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "passportValid": {
+            "type": "boolean"
+          },
+          "additionalInformation": {
+            "type": "string"
+          },
+          "changesToPassport": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DropdownItemDto"
+            }
+          },
+          "changesToPassportOther": {
+            "type": "string"
+          },
+          "photo1": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RoidRequest": {
+        "type": "object",
+        "properties": {
+          "ncosid": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScarMarksDto": {
+        "required": [
+          "description",
+          "location",
+          "scarAdditionalInfo",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "photo1": {
+            "type": "string"
+          },
+          "photo2": {
+            "type": "string"
+          },
+          "photo3": {
+            "type": "string"
+          },
+          "scarAltered": {
+            "type": "boolean"
+          },
+          "scarAdditionalInfo": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SessionModel": {
+        "required": [
+          "emailId",
+          "geolocation",
+          "id",
+          "ipAddress",
+          "mobileNumber",
+          "navigator",
+          "startDateTime"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "geolocation": {
+            "$ref": "#/components/schemas/GeolocationDto"
+          },
+          "startDateTime": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "endDateTime": {
+            "type": "string"
+          },
+          "navigator": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "ipAddress": {
+            "minLength": 1,
+            "pattern": "^(\\d{1,3}\\.){3}\\d{1,3}$",
+            "type": "string"
+          },
+          "emailId": {
+            "minLength": 1,
+            "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+            "type": "string"
+          },
+          "mobileNumber": {
+            "minLength": 1,
+            "pattern": "^(\\d{8}|\\d{10})$",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TattooDto": {
+        "required": [
+          "category",
+          "description",
+          "location",
+          "otherCategory",
+          "otherLocation",
+          "otherSubCategory",
+          "reportChangesinTattoo",
+          "subCategory",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "otherLocation": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "otherCategory": {
+            "type": "string"
+          },
+          "subCategory": {
+            "type": "string"
+          },
+          "otherSubCategory": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "photo1": {
+            "type": "string"
+          },
+          "photo2": {
+            "type": "string"
+          },
+          "photo3": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reportChangesinTattoo": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TelephoneDto": {
+        "required": [
+          "additionalInfo",
+          "providerAdditionalInfo",
+          "serviceProvider",
+          "telephoneNumber",
+          "telephoneNumberOwnership",
+          "telephoneNumberOwnershipOther",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "telephoneNumber": {
+            "type": "string"
+          },
+          "preferredContact": {
+            "type": "boolean"
+          },
+          "serviceProvider": {
+            "type": "string"
+          },
+          "providerAdditionalInfo": {
+            "type": "string"
+          },
+          "telephoneNumberOwnership": {
+            "type": "string"
+          },
+          "telephoneNumberOwnershipOther": {
+            "type": "string"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "additionalInfo": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VehicleDto": {
+        "required": [
+          "additionalInformation",
+          "changeStartDate",
+          "newRegistrationNumber",
+          "oldRegistrationNumber",
+          "otherVehicleMake",
+          "otherVehicleModel",
+          "primaryColour",
+          "primaryOtherColour",
+          "registrationNumber",
+          "state",
+          "vehicleMake",
+          "vehicleMakeValue",
+          "vehicleModel",
+          "vehicleYear"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "registrationNumber": {
+            "type": "string"
+          },
+          "oldRegistrationNumber": {
+            "type": "string"
+          },
+          "newRegistrationNumber": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "vehicleOwner": {
+            "type": "boolean"
+          },
+          "primaryColour": {
+            "type": "string"
+          },
+          "primaryOtherColour": {
+            "type": "string"
+          },
+          "secondaryColour": {
+            "type": "string"
+          },
+          "secondaryOtherColour": {
+            "type": "string"
+          },
+          "bodyType": {
+            "type": "string"
+          },
+          "otherBodyType": {
+            "type": "string"
+          },
+          "vehicleMake": {
+            "type": "string"
+          },
+          "vehicleMakeValue": {
+            "type": "string"
+          },
+          "otherVehicleMake": {
+            "type": "string"
+          },
+          "vehicleModel": {
+            "type": "string"
+          },
+          "otherVehicleModel": {
+            "type": "string"
+          },
+          "vehicleYear": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "photo1": {
+            "type": "string"
+          },
+          "photo2": {
+            "type": "string"
+          },
+          "photo3": {
+            "type": "string"
+          },
+          "noLongerUsage": {
+            "type": "boolean"
+          },
+          "changeOfOwnership": {
+            "type": "boolean"
+          },
+          "changeOfRegistrationNumber": {
+            "type": "boolean"
+          },
+          "additionalInformation": {
+            "type": "string"
+          },
+          "changeStartDate": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}
