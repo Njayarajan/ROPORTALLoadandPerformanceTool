@@ -473,6 +473,67 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
         });
     };
     
+    const handleStartApiScan = () => {
+        if (!apiData || !url) {
+            setFeedbackModalState({ isOpen: true, type: 'error', message: 'Please set a Base URL and load an API Spec before running a scan.' });
+            return;
+        }
+
+        const getEndpoints = apiData.paths.flatMap(path => 
+            path.methods
+                .filter(method => 
+                    method.method.toUpperCase() === 'GET' && 
+                    (!method.parameters || method.parameters.every(p => !p.required))
+                )
+                .map(method => ({
+                    url: `${url.replace(/\/$/, '')}${path.path}`,
+                    method: 'GET'
+                }))
+        );
+
+        if (getEndpoints.length === 0) {
+            setFeedbackModalState({ isOpen: true, type: 'error', message: "No parameter-less GET endpoints were found in the API specification to run a scan." });
+            return;
+        }
+
+        const parsedUsers = parseInt(users, 10) || 1;
+        const parsedDuration = parseInt(duration, 10) || 1;
+        const parsedPacing = parseInt(pacing, 10) || 0;
+        const parsedRampUp = parseInt(rampUp, 10) || 0;
+        const parsedInitialUsers = parseInt(initialUsers, 10) || 1;
+        const parsedStepUsers = parseInt(stepUsers, 10) || 1;
+        const parsedStepDuration = parseInt(stepDuration, 10) || 1;
+        const parsedIterations = parseInt(iterations, 10) || 1000;
+        const parsedGracefulShutdown = parseInt(gracefulShutdown, 10) || 20;
+
+        const baseConfig: Omit<LoadTestConfig, 'url' | 'method' | 'body' | 'endpoints'> = {
+            users: Math.max(1, Math.min(parsedUsers, maxUsers)),
+            duration: Math.max(1, Math.min(parsedDuration, maxDuration)),
+            pacing: parsedPacing,
+            loadProfile: loadProfile,
+            rampUp: loadProfile === 'ramp-up' ? Math.min(parsedRampUp, maxRampUp) : 0,
+            initialUsers: loadProfile === 'stair-step' ? Math.max(1, parsedInitialUsers) : 0,
+            stepUsers: loadProfile === 'stair-step' ? Math.max(1, parsedStepUsers) : 0,
+            stepDuration: loadProfile === 'stair-step' ? Math.max(1, parsedStepDuration) : 0,
+            runMode: runMode,
+            iterations: parsedIterations,
+            authToken,
+            headers,
+            assertions,
+            useCorsProxy,
+            networkDiagnosticsEnabled,
+            gracefulShutdown: parsedGracefulShutdown,
+            monitoringUrl: monitoringUrl.trim() || undefined,
+            isIdAutoIncrementEnabled,
+            idPool,
+            idPoolingMode,
+            dataDrivenBody: [],
+            dataDrivenMode: 'loop'
+        };
+        
+        onStartComprehensive(baseConfig, getEndpoints);
+    };
+
     // --- Header Handlers ---
     const addHeader = () => {
         setHeaders([...headers, { id: crypto.randomUUID(), key: '', value: '', enabled: true }]);
@@ -840,6 +901,16 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                                 )}
                                 </div>
                             </div>
+                                <button
+                                    type="button"
+                                    onClick={handleStartApiScan}
+                                    disabled={!apiData || !url || status === TestStatus.RUNNING}
+                                    className="w-full mt-2 flex items-center justify-center space-x-2 px-3 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 rounded-md transition disabled:opacity-50"
+                                    title="Find and test all simple GET endpoints from the spec."
+                                >
+                                    <GlobeAltIcon className="w-5 h-5"/>
+                                    <span>Run API Scan (GETs)</span>
+                                </button>
                         </div>
 
                         <div>
