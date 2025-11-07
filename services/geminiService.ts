@@ -491,6 +491,7 @@ export async function getAnalysis(config: LoadTestConfig, stats: TestStats): Pro
   let jsonText = '';
   try {
     const client = getAiClient();
+    const isApiScan = config.url === 'API-wide scan';
     
     const networkAnalysisSection = stats.avgNetworkTimings ? `
       - Network Averages: DNS=${stats.avgNetworkTimings.dns.toFixed(0)}ms, TCP=${stats.avgNetworkTimings.tcp.toFixed(0)}ms, TLS=${stats.avgNetworkTimings.tls.toFixed(0)}ms, TTFB=${stats.avgNetworkTimings.ttfb.toFixed(0)}ms, Download=${stats.avgNetworkTimings.download.toFixed(0)}ms
@@ -510,7 +511,7 @@ export async function getAnalysis(config: LoadTestConfig, stats: TestStats): Pro
       Analyze the following load test results and generate the complete JSON report.
 
       **Input Data:**
-      - Test Configuration: Peak Users=${config.users}, Duration=${config.duration}s, URL=${config.url}
+      - Test Configuration: Peak Users=${config.users}, Duration=${config.duration}s, URL=${isApiScan ? 'API-wide scan' : config.url}
       - Key Metrics: Throughput=${stats.throughput.toFixed(2)} req/s, Success Rate=${((stats.successCount / stats.totalRequests) * 100).toFixed(2)}%, Avg. Response Time=${stats.avgResponseTime.toFixed(0)} ms, Apdex Score=${stats.apdexScore.toFixed(2)}, Latency CV=${stats.latencyCV.toFixed(1)}%
       - Latency Details: Min=${stats.minResponseTime.toFixed(0)}ms, Max=${stats.maxResponseTime.toFixed(0)}ms, StdDev=${stats.latencyStdDev.toFixed(0)}ms
       - Error Distribution: ${JSON.stringify(stats.errorDistribution)}
@@ -627,6 +628,7 @@ export async function getFailureAnalysis(config: LoadTestConfig, stats: TestStat
   let jsonText = '';
   try {
     const client = getAiClient();
+    const isApiScan = config.url === 'API-wide scan';
 
     const systemInstruction = `You are a senior Site Reliability Engineer (SRE). Your task is to analyze a failed load test, identify the most likely root cause, and provide actionable feedback for developers. Your tone should be technical, direct, and helpful. The output must be a structured JSON object.`;
 
@@ -634,7 +636,7 @@ export async function getFailureAnalysis(config: LoadTestConfig, stats: TestStat
       Analyze the following failed load test report and generate a root cause analysis.
 
       **Input Data:**
-      - Test Configuration: Peak Users=${config.users}, Duration=${config.duration}s, URL=${config.url}, Method=${config.method}, Graceful Shutdown=${config.gracefulShutdown}s
+      - Test Configuration: Peak Users=${config.users}, Duration=${config.duration}s, URL=${isApiScan ? `API-wide scan of ${config.endpoints?.length || 0} endpoints` : config.url}, Method=${isApiScan ? 'GET' : config.method}, Graceful Shutdown=${config.gracefulShutdown}s
       - Key Metrics: Throughput=${stats.throughput.toFixed(2)} req/s, Error Rate=${((stats.errorCount / stats.totalRequests) * 100).toFixed(2)}%, Avg. Response Time=${stats.avgResponseTime.toFixed(0)} ms
       - Error Distribution: ${JSON.stringify(stats.errorDistribution)}
       - Final Test Runner Error: ${testRunnerError || 'N/A'}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { type LoadTestConfig, TestStatus, type ApiPath, type ParsedApiData, UsageLimits, Assertion, ApiSpecMetadata, OperationMode, DataGenerationRequest, UploadedFile, SavedUrl, AutoFixStoppedError, SavedBasePayload, Header, SavedHeaderSet, ValidationStatus } from '../types';
+import { type LoadTestConfig, TestStatus, type ApiPath, type ParsedApiData, UsageLimits, Assertion, ApiSpecMetadata, OperationMode, DataGenerationRequest, UploadedFile, SavedUrl, AutoFixStoppedError, SavedBasePayload, Header, SavedHeaderSet, ValidationStatus, ApiMethod } from '../types';
 import { PlayIcon, StopIcon, ResetIcon, SpinnerIcon, InformationCircleIcon, ChevronDownIcon, GlobeAltIcon, BeakerIcon, SparklesIcon, ArrowUturnLeftIcon, PlusIcon, XMarkIcon, ClipboardDocumentCheckIcon, DocumentDuplicateIcon, CloudArrowUpIcon, BoltIcon, CheckCircleIcon, XCircleIcon, BookmarkSquareIcon, ShieldCheckIcon, DatabaseIcon, ClipboardDocumentListIcon, DocumentArrowDownIcon, TrashIcon, MagnifyingGlassIcon, DocumentTextIcon, CodeBracketIcon, PhotoIcon, ExclamationTriangleIcon, KeyIcon, CheckIcon, PencilSquareIcon } from './icons';
 import LoadProfileChart from './LoadProfileChart';
 import * as geminiService from '../services/geminiService';
@@ -355,8 +355,34 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
 
 
     // --- Handlers ---
+
+    const checkAuthentication = useCallback((endpoints: { path: string, method: ApiMethod }[]): boolean => {
+        const endpointsRequiringAuth = endpoints.filter(({ method }) => 
+            method.security && Array.isArray(method.security) && method.security.some(scheme => Object.keys(scheme).length > 0)
+        );
+
+        if (endpointsRequiringAuth.length > 0 && !authToken.trim()) {
+            const message = endpoints.length > 1 
+                ? `Authentication Required:\n\nYour API spec indicates that at least ${endpointsRequiringAuth.length} endpoint(s) require authentication, but no token is provided.\n\nPlease add a Bearer Token in the 'Authentication & Headers' section.`
+                : `Authentication Required:\n\nThe endpoint ${endpoints[0].method.method} ${endpoints[0].path} appears to require an authentication token, but none is provided.\n\nPlease add a Bearer Token in the 'Authentication & Headers' section.`;
+            
+            setFeedbackModalState({ isOpen: true, type: 'error', message });
+            return false;
+        }
+        return true;
+    }, [authToken, setFeedbackModalState]);
     
     const handleStart = () => {
+        const methodDetails = selectedPath?.methods.find(m => m.method === selectedMethod);
+        if (selectedPath && methodDetails) {
+            if (!checkAuthentication([{ path: selectedPath.path, method: methodDetails }])) {
+                return;
+            }
+        } else if (!selectedPath && operationMode !== 'website') {
+             setFeedbackModalState({ isOpen: true, type: 'error', message: 'No endpoint selected. Please complete Step 1.' });
+             return;
+        }
+
         let finalEndpoints: Array<{ url: string; method: string; }> | undefined;
 
         if (operationMode === 'website') {
@@ -406,6 +432,57 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
 
         onStart(finalConfig);
     };
+
+    const handleStartComprehensiveTest = useCallback(() => {
+        if (!apiData || !url) {
+            setFeedbackModalState({ isOpen: true, type: 'error', message: 'Please set a Base URL and load an API spec first.' });
+            return;
+        }
+
+        const getEndpointsWithDetails = apiData.paths.flatMap(p => 
+            p.methods
+                .filter(m => m.method === 'GET' && (!m.parameters || m.parameters.every(param => !param.required)))
+                .map(m => ({
+                    url: `${url.replace(/\/$/, '')}${p.path}`,
+                    method: m,
+                    path: p.path
+                }))
+        );
+        
+        if (getEndpointsWithDetails.length === 0) {
+            setFeedbackModalState({ isOpen: true, type: 'error', message: 'API Scan did not find any GET endpoints without required parameters in your specification.' });
+            return;
+        }
+        
+        if (!checkAuthentication(getEndpointsWithDetails)) {
+            return;
+        }
+
+        if (runMode !== 'duration') {
+             setFeedbackModalState({
+                 isOpen: true,
+                 type: 'success', // Using success style for an info message
+                 message: `Info: API Scan runs in 'duration' mode. Your test will be run using the duration and load profile settings, ignoring the 'iterations' setting.`
+             });
+        }
+        
+        const baseConfig = getCurrentConfig();
+        if (!baseConfig) return;
+
+        const scanConfig: LoadTestConfig = {
+            ...baseConfig,
+            url: 'API-wide scan',
+            method: 'GET',
+            body: '',
+            runMode: 'duration',
+            endpoints: getEndpointsWithDetails.map(({ url, method }) => ({ url, method: method.method })),
+            dataDrivenBody: [],
+        };
+        
+        setTitle(`API Scan: ${getEndpointsWithDetails.length} GET Endpoints`);
+        onStart(scanConfig);
+
+    }, [apiData, url, checkAuthentication, getCurrentConfig, runMode, setTitle, onStart, setFeedbackModalState]);
     
     const handleGenerateDataFromConfig = () => {
         if (!selectedBasePayloadId) {
@@ -832,6 +909,26 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                                 )}
                                 </div>
                             </div>
+                            {operationMode === 'performance' && (
+                                <div className="mt-2 flex items-center space-x-2">
+                                     <button type="button" onClick={onManageApiSpecs} className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium text-white bg-gray-700/50 rounded-md shadow-sm hover:bg-gray-600/50">
+                                        <DocumentDuplicateIcon className="w-5 h-5"/>
+                                        <span>Manage Specs</span>
+                                    </button>
+                                    {apiData && (
+                                        <button
+                                            type="button"
+                                            onClick={handleStartComprehensiveTest}
+                                            disabled={status === TestStatus.RUNNING || !url}
+                                            className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                                            title="Scan the loaded API for all GET endpoints without parameters and run a load test against them."
+                                        >
+                                            <GlobeAltIcon className="w-5 h-5" />
+                                            <span>Run API Scan (GETs)</span>
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         <div>
