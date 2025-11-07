@@ -861,7 +861,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                                             onClick={handleStartComprehensiveTest}
                                             disabled={status === TestStatus.RUNNING || !url}
                                             className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md shadow-sm hover:bg-indigo-700 disabled:opacity-50"
-                                            title="Scans the entire loaded API spec, finds all GET endpoints that do not require parameters, and runs a single load test against all of them simultaneously. This is useful for a broad API health check, unlike the 'Simple GET Test' tab which tests only one specific URL."
+                                            title="Scans your API spec to test all eligible GET endpoints at once. This provides a broad health check, distinct from the single-URL focus of the 'Simple GET Test' tab."
                                         >
                                             <GlobeAltIcon className="w-5 h-5" />
                                             <span>Run API Scan (GETs)</span>
