@@ -867,16 +867,6 @@ const App: React.FC = () => {
     }
   }, [clearTimers, handleReset]);
   
-  const handleStartComprehensiveTest = useCallback((baseConfig: Omit<LoadTestConfig, 'url' | 'method' | 'body' | 'endpoints'>, endpoints: Array<{ url: string; method: string; }>) => {
-    if (!endpoints || endpoints.length === 0) {
-      setError("No parameter-less GET endpoints were found in the API specification to run a scan.");
-      setStatus(TestStatus.ERROR);
-      return;
-    }
-    const fullConfig: LoadTestConfig = { ...baseConfig, url: '', method: '', body: '', endpoints };
-    handleStartTest(fullConfig);
-  }, [handleStartTest]);
-  
   const handleGenerateData = useCallback((data: string) => {
     handleReset('display-generated-data');
     setGeneratedData(data);
@@ -1198,7 +1188,6 @@ const App: React.FC = () => {
         <div className="lg:col-span-1 lg:sticky lg:top-6 h-full">
             <ConfigPanel 
               onStart={handleStartTest}
-              onStartComprehensive={handleStartComprehensiveTest}
               onStop={handleStopTest}
               onReset={handleReset}
               status={status}

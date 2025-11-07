@@ -74,18 +74,10 @@ async function virtualUserSingleRequest(
 ) {
   if (signal.aborted) return; // Prevent starting new requests if the test is already stopped.
 
-  let targetUrl = config.url;
-  let targetMethod = config.method;
+  const targetUrl = config.url;
+  const targetMethod = config.method;
   let targetBody = config.body;
 
-  // Handle comprehensive API scan mode
-  if (config.endpoints && config.endpoints.length > 0) {
-    const endpoint = config.endpoints[Math.floor(Math.random() * config.endpoints.length)];
-    targetUrl = endpoint.url;
-    targetMethod = endpoint.method;
-    targetBody = endpoint.body;
-  }
-  
   // Handle data-driven mode
   if (dataContext) {
       const index = dataContext.getNextIndex();
@@ -432,7 +424,14 @@ export async function runLoadTest(
         const durationRunner = async () => {
             while (!softStopSignal.aborted) {
                 const requestIndex = requestIndexCounter.next();
-                await virtualUserSingleRequest(config, onResult, hardStopSignal, dataContext, requestIndex);
+                const runnerConfig = { ...config };
+                if (config.endpoints && config.endpoints.length > 0) {
+                    const endpoint = config.endpoints[Math.floor(Math.random() * config.endpoints.length)];
+                    runnerConfig.url = endpoint.url;
+                    runnerConfig.method = endpoint.method;
+                }
+
+                await virtualUserSingleRequest(runnerConfig, onResult, hardStopSignal, dataContext, requestIndex);
                 if (config.pacing > 0) {
                     await abortableSleep(config.pacing, softStopSignal);
                 }
@@ -511,7 +510,7 @@ export async function getAnalysis(config: LoadTestConfig, stats: TestStats): Pro
       Analyze the following load test results and generate the complete JSON report.
 
       **Input Data:**
-      - Test Configuration: Peak Users=${config.users}, Duration=${config.duration}s, URL=${config.endpoints ? 'API-wide scan' : config.url}
+      - Test Configuration: Peak Users=${config.users}, Duration=${config.duration}s, URL=${config.url}
       - Key Metrics: Throughput=${stats.throughput.toFixed(2)} req/s, Success Rate=${((stats.successCount / stats.totalRequests) * 100).toFixed(2)}%, Avg. Response Time=${stats.avgResponseTime.toFixed(0)} ms, Apdex Score=${stats.apdexScore.toFixed(2)}, Latency CV=${stats.latencyCV.toFixed(1)}%
       - Latency Details: Min=${stats.minResponseTime.toFixed(0)}ms, Max=${stats.maxResponseTime.toFixed(0)}ms, StdDev=${stats.latencyStdDev.toFixed(0)}ms
       - Error Distribution: ${JSON.stringify(stats.errorDistribution)}
@@ -635,7 +634,7 @@ export async function getFailureAnalysis(config: LoadTestConfig, stats: TestStat
       Analyze the following failed load test report and generate a root cause analysis.
 
       **Input Data:**
-      - Test Configuration: Peak Users=${config.users}, Duration=${config.duration}s, URL=${config.endpoints ? 'API-wide scan' : config.url}, Method=${config.method}, Graceful Shutdown=${config.gracefulShutdown}s
+      - Test Configuration: Peak Users=${config.users}, Duration=${config.duration}s, URL=${config.url}, Method=${config.method}, Graceful Shutdown=${config.gracefulShutdown}s
       - Key Metrics: Throughput=${stats.throughput.toFixed(2)} req/s, Error Rate=${((stats.errorCount / stats.totalRequests) * 100).toFixed(2)}%, Avg. Response Time=${stats.avgResponseTime.toFixed(0)} ms
       - Error Distribution: ${JSON.stringify(stats.errorDistribution)}
       - Final Test Runner Error: ${testRunnerError || 'N/A'}
