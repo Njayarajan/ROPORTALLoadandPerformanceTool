@@ -5,7 +5,8 @@ import LoadProfileChart from './LoadProfileChart';
 import * as geminiService from '../services/geminiService';
 import { uploadFileToBlobStorage } from '../services/apiService';
 import { toTitleCase } from '../utils/helpers';
-import { getSavedPayloads, savePayload, deletePayload, updatePayload, saveHeaderSet, updateHeaderSet, deleteHeaderSet } from '../services/payloadService';
+// FIX: Remove `getSavedPayloads` as it's no longer fetched locally in this component.
+import { savePayload, deletePayload, updatePayload, saveHeaderSet, updateHeaderSet, deleteHeaderSet } from '../services/payloadService';
 import { saveSuccessfulPayload } from '../services/learningService';
 import HelpHighlighter from './HelpHighlighter';
 
@@ -34,6 +35,9 @@ interface ConfigPanelProps {
   currentHelpStep: number | null;
   savedHeaderSets: SavedHeaderSet[];
   onHeaderSetsChanged: () => void;
+  // FIX: Add props for receiving saved payloads and a callback to refresh them.
+  savedPayloads: SavedBasePayload[];
+  onPayloadsChanged: () => void;
   onRegisterConfigGetter: (getter: () => LoadTestConfig | null) => void;
   setValidationModalState: React.Dispatch<React.SetStateAction<{ isOpen: boolean; status: ValidationStatus; logs: string[]; payload: string | null; title: string; }>>;
   setFeedbackModalState: React.Dispatch<React.SetStateAction<{ isOpen: boolean; type: 'success' | 'error'; message: string; }>>;
@@ -122,7 +126,7 @@ const AccordionStep: React.FC<{
 
 
 export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
-    const { onStart, onStop, onReset, status, apiData, rawApiSpec, isApiLoading, apiError, configToLoad, limits, currentlyLoadedSpec, operationMode, setOperationMode, onGenerateData, savedUrls, title, setTitle, onManageUrls, onSetupCache, onManageApiSpecs, activeHelpTour, currentHelpStep, savedHeaderSets, onHeaderSetsChanged, onRegisterConfigGetter, setValidationModalState, setFeedbackModalState, validationAbortControllerRef, onUsePayloadRef } = props;
+    const { onStart, onStop, onReset, status, apiData, rawApiSpec, isApiLoading, apiError, configToLoad, limits, currentlyLoadedSpec, operationMode, setOperationMode, onGenerateData, savedUrls, title, setTitle, onManageUrls, onSetupCache, onManageApiSpecs, activeHelpTour, currentHelpStep, savedHeaderSets, onHeaderSetsChanged, savedPayloads, onPayloadsChanged, onRegisterConfigGetter, setValidationModalState, setFeedbackModalState, validationAbortControllerRef, onUsePayloadRef } = props;
 
     // --- State Management ---
     const [activeStep, setActiveStep] = useState(1);
@@ -175,7 +179,6 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
 
     // Data Generation Mode State
     const [dataGenRequests, setDataGenRequests] = useState<DataGenerationRequest[]>([]);
-    const [savedPayloads, setSavedPayloads] = useState<SavedBasePayload[]>([]);
     const [selectedBasePayloadId, setSelectedBasePayloadId] = useState<string | null>(null);
     const [dataDrivenBody, setDataDrivenBody] = useState<any[]>([]);
     const [dataDrivenMode, setDataDrivenMode] = useState<'loop' | 'strict'>('loop');
@@ -266,21 +269,6 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             setIdPoolingMode(configToLoad.idPoolingMode ?? 'sequential');
         }
     }, [configToLoad, apiData]);
-    
-    const loadSavedPayloads = useCallback(async () => {
-        try {
-            const payloads = await getSavedPayloads();
-            setSavedPayloads(payloads);
-        } catch (err: any) {
-            setFeedbackModalState({ isOpen: true, type: 'error', message: err.message });
-        }
-    }, [setFeedbackModalState]);
-
-    useEffect(() => {
-        if (operationMode === 'dataGeneration' || operationMode === 'performance') {
-            loadSavedPayloads();
-        }
-    }, [operationMode, loadSavedPayloads]);
     
     useEffect(() => {
         if (operationMode === 'dataGeneration' && submissionEndpoint && !selectedPath) {
@@ -505,7 +493,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             title: `Generating ${dataGenRequests.reduce((sum, r) => sum + r.count, 0)} Records`
         });
         
-        const maxAttempts = Math.max(1, Math.min(parseInt(aiValidationAttempts, 10) || 7, 15));
+        const maxAttempts = Math.max(1, Math.min(parseInt(aiValidationAttempts, 10) || 7, 50));
 
         geminiService.generateAndValidatePersonalizedData(
             JSON.stringify(basePayload.payload),
@@ -661,7 +649,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                     'Generating Custom Payload...'
         });
         
-        const maxAttempts = Math.max(1, Math.min(parseInt(aiValidationAttempts, 10) || 7, 15));
+        const maxAttempts = Math.max(1, Math.min(parseInt(aiValidationAttempts, 10) || 7, 50));
 
         try {
             const finalBody = await geminiService.generateAndValidateBody(
@@ -696,7 +684,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             try {
                 const payloadJson = JSON.parse(body);
                 await savePayload(description, payloadJson);
-                loadSavedPayloads(); // Refresh the list
+                onPayloadsChanged(); // Refresh the list
                 setFeedbackModalState({ isOpen: true, type: 'success', message: 'Base payload saved successfully!' });
             } catch (err: any) {
                  setFeedbackModalState({ isOpen: true, type: 'error', message: err.message || 'Failed to save payload.' });
@@ -708,7 +696,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
         if (window.confirm("Are you sure you want to delete this saved payload?")) {
             try {
                 await deletePayload(id);
-                loadSavedPayloads();
+                onPayloadsChanged();
                 if (selectedBasePayloadId === id) {
                     setSelectedBasePayloadId(null);
                 }
@@ -746,7 +734,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             try {
                 await updatePayload(selectedPerfPayloadId, { description: newDescription.trim() });
                 setFeedbackModalState({ isOpen: true, type: 'success', message: 'Payload renamed successfully!' });
-                await loadSavedPayloads();
+                await onPayloadsChanged();
             } catch (err: any) {
                 setFeedbackModalState({ isOpen: true, type: 'error', message: err.message || 'Failed to rename payload.' });
             }
@@ -763,7 +751,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             const payloadJson = JSON.parse(body);
             await updatePayload(selectedPerfPayloadId, { payload: payloadJson });
             setFeedbackModalState({ isOpen: true, type: 'success', message: 'Payload updated successfully!' });
-            await loadSavedPayloads();
+            await onPayloadsChanged();
         } catch (err: any) {
              if (err instanceof SyntaxError) {
                  setFeedbackModalState({ isOpen: true, type: 'error', message: 'The content in the editor is not valid JSON.' });
@@ -873,7 +861,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                                             onClick={handleStartComprehensiveTest}
                                             disabled={status === TestStatus.RUNNING || !url}
                                             className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md shadow-sm hover:bg-indigo-700 disabled:opacity-50"
-                                            title="Scan the loaded API for all GET endpoints without parameters and run a load test against them."
+                                            title="Scans the entire loaded API spec, finds all GET endpoints that do not require parameters, and runs a single load test against all of them simultaneously. This is useful for a broad API health check, unlike the 'Simple GET Test' tab which tests only one specific URL."
                                         >
                                             <GlobeAltIcon className="w-5 h-5" />
                                             <span>Run API Scan (GETs)</span>
@@ -1140,12 +1128,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                 <div className="grid grid-cols-2 gap-4">
                     <div>
                         <label htmlFor="users" className="flex items-center text-sm font-medium text-gray-300 mb-1">
-                            {runMode === 'duration' ? 'Peak Virtual Users' : 'Concurrent Users'}
-                            {runMode === 'duration' ? (
-                                <Tooltip text={`The maximum number of concurrent users. Your limit is ${maxUsers}.`} />
-                            ) : (
-                                <Tooltip text={`The number of users that will run in parallel to complete the total iterations. More users will finish the test faster.`} />
-                            )}
+                            Peak Concurrent Users
+                            <Tooltip text={`The number of virtual users to simulate. For duration-based tests, this is the peak number of concurrent users to reach (${maxUsers} max). For iteration-based tests, this is the number of users running in parallel.`} />
                         </label>
                         <input id="users" type="number" value={users} onChange={(e) => setUsers(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
                     </div>
@@ -1256,26 +1240,28 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                         </div>
                         
                         <div className="mt-2 space-y-3">
-                            <div className="space-y-2 p-3 bg-gray-800 rounded-md border border-gray-700">
-                                <div className="flex items-center justify-between">
-                                    <label className="text-sm font-medium text-gray-300">Saved Header Sets</label>
-                                    <div className="flex items-center space-x-1">
-                                        <button type="button" onClick={handleSaveHeaderSet} disabled={!selectedHeaderSetId} className="p-1 text-gray-400 hover:text-white disabled:opacity-50" title="Save changes to current set"><BookmarkSquareIcon className="w-4 h-4"/></button>
-                                        <button type="button" onClick={handleSaveHeaderSetAs} className="p-1 text-gray-400 hover:text-white" title="Save as new set"><PlusIcon className="w-4 h-4"/></button>
-                                        <button type="button" onClick={handleDeleteHeaderSet} disabled={!selectedHeaderSetId} className="p-1 text-gray-400 hover:text-red-400 disabled:opacity-50" title="Delete current set"><TrashIcon className="w-4 h-4"/></button>
+                            { (operationMode !== 'website' && selectedMethod !== 'GET') && (
+                                <div className="space-y-2 p-3 bg-gray-800 rounded-md border border-gray-700">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-sm font-medium text-gray-300">Saved Header Sets</label>
+                                        <div className="flex items-center space-x-1">
+                                            <button type="button" onClick={handleSaveHeaderSet} disabled={!selectedHeaderSetId} className="p-1 text-gray-400 hover:text-white disabled:opacity-50" title="Save changes to current set"><BookmarkSquareIcon className="w-4 h-4"/></button>
+                                            <button type="button" onClick={handleSaveHeaderSetAs} className="p-1 text-gray-400 hover:text-white" title="Save as new set"><PlusIcon className="w-4 h-4"/></button>
+                                            <button type="button" onClick={handleDeleteHeaderSet} disabled={!selectedHeaderSetId} className="p-1 text-gray-400 hover:text-red-400 disabled:opacity-50" title="Delete current set"><TrashIcon className="w-4 h-4"/></button>
+                                        </div>
                                     </div>
+                                    <select
+                                        value={selectedHeaderSetId || ''}
+                                        onChange={handleSelectHeaderSet}
+                                        className="w-full mt-1 bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    >
+                                        <option value="">-- Load a Set --</option>
+                                        {savedHeaderSets.map(set => (
+                                            <option key={set.id} value={set.id}>{set.name}</option>
+                                        ))}
+                                    </select>
                                 </div>
-                                <select
-                                    value={selectedHeaderSetId || ''}
-                                    onChange={handleSelectHeaderSet}
-                                    className="w-full mt-1 bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                >
-                                    <option value="">-- Load a Set --</option>
-                                    {savedHeaderSets.map(set => (
-                                        <option key={set.id} value={set.id}>{set.name}</option>
-                                    ))}
-                                </select>
-                            </div>
+                            )}
                             <div className="mt-2 space-y-2">
                                 {headers.map((header) => (
                                     <div key={header.id} className="flex items-center space-x-2">
@@ -1359,6 +1345,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                             <input
                                 id="ai-attempts"
                                 type="number"
+                                max="50"
                                 value={aiValidationAttempts}
                                 onChange={(e) => setAiValidationAttempts(e.target.value)}
                                 className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white"

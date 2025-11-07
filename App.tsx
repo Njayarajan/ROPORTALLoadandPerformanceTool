@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { TestStatus, type LoadTestConfig, type TestResultSample, type TestStats, type PerformanceReport, type ParsedApiData, type TestRun, type UsageLimits, AppUser, ApiSpecMetadata, OperationMode, SavedUrl, TestRunSummary, SystemStatusState, NetworkTimings, UnsavedTestRun, SavedHeaderSet, ValidationStatus, FailureAnalysisReport, TrendAnalysisReport, ResourceSample } from './types';
+// FIX: Import `SavedBasePayload` type to be used for the new state.
+import { TestStatus, type LoadTestConfig, type TestResultSample, type TestStats, type PerformanceReport, type ParsedApiData, type TestRun, type UsageLimits, AppUser, ApiSpecMetadata, OperationMode, SavedUrl, TestRunSummary, SystemStatusState, NetworkTimings, UnsavedTestRun, SavedHeaderSet, ValidationStatus, FailureAnalysisReport, TrendAnalysisReport, ResourceSample, SavedBasePayload } from './types';
 import { ConfigPanel } from './components/ConfigPanel';
 import Dashboard from './components/Dashboard';
 // FIX: Import runLoadTest to make it available for starting a performance test.
@@ -24,7 +25,7 @@ import useSystemStatus from './hooks/useSystemStatus';
 import DatabaseScriptsModal from './components/DatabaseScriptsModal';
 import ApiSpecManager from './components/ApiSpecManager';
 import HelpGuidePanel from './components/HelpGuidePanel';
-import { getHeaderSets } from './services/payloadService';
+import { getHeaderSets, getSavedPayloads } from './services/payloadService';
 import { CheckCircleIcon, ClipboardDocumentListIcon, DocumentArrowDownIcon, SpinnerIcon, StopIcon, XCircleIcon, XMarkIcon, KeyIcon } from './components/icons';
 import AccountSettingsModal from './components/AccountSettingsModal';
 
@@ -281,6 +282,10 @@ const App: React.FC = () => {
   
   // Header Set State
   const [savedHeaderSets, setSavedHeaderSets] = useState<SavedHeaderSet[]>([]);
+
+  // FIX: Added state for saved payloads to be managed at the App level.
+  // Saved Payloads State
+  const [savedPayloads, setSavedPayloads] = useState<SavedBasePayload[]>([]);
   
   // Usage Limits State
   const [usageLimits, setUsageLimits] = useState<UsageLimits | null>(null);
@@ -483,11 +488,25 @@ const App: React.FC = () => {
     try {
         const sets = await getHeaderSets();
         setSavedHeaderSets(sets);
-    } catch (err) {
-        console.error("Failed to load header sets:", err);
-        // Do not set main error for a non-critical feature
+    } catch (err: any) {
+        // FIX: A generic 'Failed to fetch' error is often a symptom of an expired session.
+        // This logic now catches such errors, assumes it's an auth failure, and forces a logout
+        // to allow the user to re-authenticate and get a valid session.
+        const errorMessage = err?.message || '';
+        const isAuthError = errorMessage.includes('Invalid Refresh Token') || 
+                            errorMessage.includes('JWT expired') || 
+                            err?.status === 401 ||
+                            errorMessage.toLowerCase().includes('failed to fetch');
+
+        if (isAuthError) {
+            console.warn("Authentication or network error while fetching header sets. Forcing logout.", err);
+            appLogout(crypto.randomUUID());
+        } else {
+            // Log other, non-auth errors but don't show a blocking UI error for this non-critical feature.
+            console.error("Failed to load header sets:", err);
+        }
     }
-  }, [isMockUser]);
+  }, [isMockUser, appLogout]);
 
   const loadApiSpecs = useCallback(async () => {
     try {
@@ -497,6 +516,35 @@ const App: React.FC = () => {
         console.error("Failed to load API specs:", err);
     }
   }, []);
+
+    const loadSavedPayloads = useCallback(async () => {
+        try {
+            const payloads = await getSavedPayloads();
+            setSavedPayloads(payloads);
+        } catch (err: any) {
+            // FIX: Added consistent auth/network error handling. If fetching payloads fails due
+            // to an expired session or network issue, force a logout so the user can re-authenticate.
+            const errorMessage = err?.message || '';
+            const isAuthError = errorMessage.includes('Invalid Refresh Token') || 
+                                errorMessage.includes('JWT expired') || 
+                                err?.status === 401 ||
+                                errorMessage.toLowerCase().includes('failed to fetch');
+
+            if (isAuthError) {
+                console.warn("Authentication or network error while fetching saved payloads. Forcing logout.", err);
+                appLogout(crypto.randomUUID());
+            } else {
+                setFeedbackModalState({ isOpen: true, type: 'error', message: `Failed to load saved payloads: ${err.message}` });
+            }
+        }
+    }, [setFeedbackModalState, appLogout]);
+
+    useEffect(() => {
+        if (operationMode === 'dataGeneration' || operationMode === 'performance') {
+            loadSavedPayloads();
+        }
+    }, [operationMode, loadSavedPayloads]);
+
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -1211,6 +1259,8 @@ const App: React.FC = () => {
               currentHelpStep={currentHelpStep}
               savedHeaderSets={savedHeaderSets}
               onHeaderSetsChanged={loadHeaderSets}
+              savedPayloads={savedPayloads}
+              onPayloadsChanged={loadSavedPayloads}
               onRegisterConfigGetter={registerConfigGetter}
               setValidationModalState={setValidationModalState}
               setFeedbackModalState={setFeedbackModalState}
