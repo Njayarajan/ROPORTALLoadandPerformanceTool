@@ -5,8 +5,7 @@ import LoadProfileChart from './LoadProfileChart';
 import * as geminiService from '../services/geminiService';
 import { uploadFileToBlobStorage } from '../services/apiService';
 import { toTitleCase } from '../utils/helpers';
-// FIX: Remove `getSavedPayloads` as it's no longer fetched locally in this component.
-import { savePayload, deletePayload, updatePayload, saveHeaderSet, updateHeaderSet, deleteHeaderSet } from '../services/payloadService';
+import { getSavedPayloads, savePayload, deletePayload, updatePayload, saveHeaderSet, updateHeaderSet, deleteHeaderSet } from '../services/payloadService';
 import { saveSuccessfulPayload } from '../services/learningService';
 import HelpHighlighter from './HelpHighlighter';
 
@@ -35,9 +34,6 @@ interface ConfigPanelProps {
   currentHelpStep: number | null;
   savedHeaderSets: SavedHeaderSet[];
   onHeaderSetsChanged: () => void;
-  // FIX: Add props for receiving saved payloads and a callback to refresh them.
-  savedPayloads: SavedBasePayload[];
-  onPayloadsChanged: () => void;
   onRegisterConfigGetter: (getter: () => LoadTestConfig | null) => void;
   setValidationModalState: React.Dispatch<React.SetStateAction<{ isOpen: boolean; status: ValidationStatus; logs: string[]; payload: string | null; title: string; }>>;
   setFeedbackModalState: React.Dispatch<React.SetStateAction<{ isOpen: boolean; type: 'success' | 'error'; message: string; }>>;
@@ -126,7 +122,7 @@ const AccordionStep: React.FC<{
 
 
 export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
-    const { onStart, onStop, onReset, status, apiData, rawApiSpec, isApiLoading, apiError, configToLoad, limits, currentlyLoadedSpec, operationMode, setOperationMode, onGenerateData, savedUrls, title, setTitle, onManageUrls, onSetupCache, onManageApiSpecs, activeHelpTour, currentHelpStep, savedHeaderSets, onHeaderSetsChanged, savedPayloads, onPayloadsChanged, onRegisterConfigGetter, setValidationModalState, setFeedbackModalState, validationAbortControllerRef, onUsePayloadRef } = props;
+    const { onStart, onStop, onReset, status, apiData, rawApiSpec, isApiLoading, apiError, configToLoad, limits, currentlyLoadedSpec, operationMode, setOperationMode, onGenerateData, savedUrls, title, setTitle, onManageUrls, onSetupCache, onManageApiSpecs, activeHelpTour, currentHelpStep, savedHeaderSets, onHeaderSetsChanged, onRegisterConfigGetter, setValidationModalState, setFeedbackModalState, validationAbortControllerRef, onUsePayloadRef } = props;
 
     // --- State Management ---
     const [activeStep, setActiveStep] = useState(1);
@@ -188,6 +184,9 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
 
     // Header Sets State
     const [selectedHeaderSetId, setSelectedHeaderSetId] = useState<string | null>(null);
+
+    // Saved Payloads State
+    const [savedPayloads, setSavedPayloads] = useState<SavedBasePayload[]>([]);
     
     // Performance Mode Saved Payloads
     const [selectedPerfPayloadId, setSelectedPerfPayloadId] = useState<string | null>(null);
@@ -224,6 +223,21 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
       return null;
     }, [apiData]);
 
+    const loadSavedPayloads = useCallback(async () => {
+        try {
+            const payloads = await getSavedPayloads();
+            setSavedPayloads(payloads);
+        } catch (err: any) {
+            setFeedbackModalState({ isOpen: true, type: 'error', message: `Failed to load saved payloads: ${err.message}` });
+        }
+    }, [setFeedbackModalState]);
+
+    useEffect(() => {
+        if (operationMode === 'dataGeneration' || operationMode === 'performance') {
+            loadSavedPayloads();
+        }
+    }, [operationMode, loadSavedPayloads]);
+    
     const dataGenerationFormTypes = useMemo(() => {
         if (!rawApiSpec?.components?.schemas?.FormDataDto?.properties) {
             return ['emails', 'passports']; // Fallback to old values if spec not loaded
@@ -684,7 +698,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             try {
                 const payloadJson = JSON.parse(body);
                 await savePayload(description, payloadJson);
-                onPayloadsChanged(); // Refresh the list
+                loadSavedPayloads(); // Refresh the list
                 setFeedbackModalState({ isOpen: true, type: 'success', message: 'Base payload saved successfully!' });
             } catch (err: any) {
                  setFeedbackModalState({ isOpen: true, type: 'error', message: err.message || 'Failed to save payload.' });
@@ -696,7 +710,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
         if (window.confirm("Are you sure you want to delete this saved payload?")) {
             try {
                 await deletePayload(id);
-                onPayloadsChanged();
+                loadSavedPayloads();
                 if (selectedBasePayloadId === id) {
                     setSelectedBasePayloadId(null);
                 }
@@ -734,7 +748,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             try {
                 await updatePayload(selectedPerfPayloadId, { description: newDescription.trim() });
                 setFeedbackModalState({ isOpen: true, type: 'success', message: 'Payload renamed successfully!' });
-                await onPayloadsChanged();
+                await loadSavedPayloads();
             } catch (err: any) {
                 setFeedbackModalState({ isOpen: true, type: 'error', message: err.message || 'Failed to rename payload.' });
             }
@@ -751,7 +765,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             const payloadJson = JSON.parse(body);
             await updatePayload(selectedPerfPayloadId, { payload: payloadJson });
             setFeedbackModalState({ isOpen: true, type: 'success', message: 'Payload updated successfully!' });
-            await onPayloadsChanged();
+            await loadSavedPayloads();
         } catch (err: any) {
              if (err instanceof SyntaxError) {
                  setFeedbackModalState({ isOpen: true, type: 'error', message: 'The content in the editor is not valid JSON.' });
