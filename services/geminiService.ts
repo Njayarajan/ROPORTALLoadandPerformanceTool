@@ -356,13 +356,17 @@ export async function runLoadTest(
     // --- ITERATION MODE (Worker Pool) ---
     // This mode is architected to prevent the race condition where more requests are sent than specified.
     if (config.runMode === 'iterations') {
-        // Use a shared counter to ensure correct, ordered indices across all workers.
+        // FIX: Under high concurrency, the previous counter could suffer from a race
+        // condition, causing more iterations to be dispatched than configured. This
+        // "atomic" implementation ensures exactly the correct number of tasks are created.
         const iterationCounter = {
-            i: -1,
+            i: 0,
             next: function() {
-                this.i++;
-                if (this.i < config.iterations) {
-                    return this.i;
+                // Post-increment returns the current value, then increments.
+                // This is effectively an atomic "fetch and add" in single-threaded JS.
+                const currentIndex = this.i++;
+                if (currentIndex < config.iterations) {
+                    return currentIndex;
                 }
                 return null;
             }

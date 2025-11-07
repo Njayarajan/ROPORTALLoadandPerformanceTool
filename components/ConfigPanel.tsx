@@ -3,7 +3,7 @@ import { type LoadTestConfig, TestStatus, type ApiPath, type ParsedApiData, Usag
 import { PlayIcon, StopIcon, ResetIcon, SpinnerIcon, InformationCircleIcon, ChevronDownIcon, GlobeAltIcon, BeakerIcon, SparklesIcon, ArrowUturnLeftIcon, PlusIcon, XMarkIcon, ClipboardDocumentCheckIcon, DocumentDuplicateIcon, CloudArrowUpIcon, BoltIcon, CheckCircleIcon, XCircleIcon, BookmarkSquareIcon, ShieldCheckIcon, DatabaseIcon, ClipboardDocumentListIcon, DocumentArrowDownIcon, TrashIcon, MagnifyingGlassIcon, DocumentTextIcon, CodeBracketIcon, PhotoIcon, ExclamationTriangleIcon, KeyIcon, CheckIcon, PencilSquareIcon } from './icons';
 import LoadProfileChart from './LoadProfileChart';
 import * as geminiService from '../services/geminiService';
-import { uploadFileToBlobStorage, crawlWebsite } from '../services/apiService';
+import { uploadFileToBlobStorage } from '../services/apiService';
 import { toTitleCase } from '../utils/helpers';
 import { getSavedPayloads, savePayload, deletePayload, updatePayload, saveHeaderSet, updateHeaderSet, deleteHeaderSet } from '../services/payloadService';
 import { saveSuccessfulPayload } from '../services/learningService';
@@ -172,10 +172,6 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
     
     // Website Test Mode State
     const [websiteUrl, setWebsiteUrl] = useState('');
-    const [isCrawling, setIsCrawling] = useState(false);
-    const [crawlError, setCrawlError] = useState<string | null>(null);
-    const [discoveredResources, setDiscoveredResources] = useState<Array<{type: string; url: string}>>([]);
-    const [selectedResources, setSelectedResources] = useState<string[]>([]);
 
     // Data Generation Mode State
     const [dataGenRequests, setDataGenRequests] = useState<DataGenerationRequest[]>([]);
@@ -202,16 +198,16 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
     const isStep1Complete = useMemo(() => {
         if (operationMode === 'performance') return !!url && !!selectedPath && !!selectedMethod;
         if (operationMode === 'dataGeneration') return !!url && !!selectedPath && !!selectedMethod && !!selectedBasePayloadId;
-        if (operationMode === 'website') return !!websiteUrl && discoveredResources.length > 0;
+        if (operationMode === 'website') return !!websiteUrl;
         return false;
-    }, [operationMode, url, selectedPath, selectedMethod, websiteUrl, discoveredResources, selectedBasePayloadId]);
+    }, [operationMode, url, selectedPath, selectedMethod, websiteUrl, selectedBasePayloadId]);
 
     const isStep2Complete = useMemo(() => {
         if (operationMode === 'performance') return (selectedMethod !== 'POST' && selectedMethod !== 'PUT') || (body.trim() !== '');
         if (operationMode === 'dataGeneration') return dataGenRequests.length > 0;
-        if (operationMode === 'website') return selectedResources.length > 0;
+        if (operationMode === 'website') return true;
         return false;
-    }, [operationMode, selectedMethod, body, dataGenRequests, selectedResources]);
+    }, [operationMode, selectedMethod, body, dataGenRequests]);
 
     const submissionEndpoint = useMemo(() => {
       if (!apiData) return null;
@@ -383,12 +379,6 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
              return;
         }
 
-        let finalEndpoints: Array<{ url: string; method: string; }> | undefined;
-
-        if (operationMode === 'website') {
-            finalEndpoints = selectedResources.map(resUrl => ({ url: resUrl, method: 'GET' }));
-        }
-
         const parsedUsers = parseInt(users, 10) || 1;
         const parsedDuration = parseInt(duration, 10) || 1;
         const parsedPacing = parseInt(pacing, 10) || 0;
@@ -402,11 +392,13 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
         const currentLoadProfile = (['ramp-up', 'stair-step'] as const).includes(loadProfile) ? loadProfile : 'ramp-up';
 
         const finalConfig: LoadTestConfig = {
-            url: selectedPath ? `${url.replace(/\/$/, '')}${selectedPath.path}` : url,
-            method: selectedMethod,
-            body: dataDrivenBody.length > 0 ? '' : body, // Body is handled by data-driven context
-            dataDrivenBody: dataDrivenBody,
-            dataDrivenMode: dataDrivenMode,
+            url: operationMode === 'website' 
+                 ? websiteUrl 
+                 : (selectedPath ? `${url.replace(/\/$/, '')}${selectedPath.path}` : url),
+            method: operationMode === 'website' ? 'GET' : selectedMethod,
+            body: operationMode === 'website' ? '' : (dataDrivenBody.length > 0 ? '' : body),
+            dataDrivenBody: operationMode === 'website' ? [] : dataDrivenBody,
+            dataDrivenMode: operationMode === 'website' ? 'loop' : dataDrivenMode,
             users: Math.max(1, Math.min(parsedUsers, maxUsers)),
             duration: Math.max(1, Math.min(parsedDuration, maxDuration)),
             pacing: parsedPacing,
@@ -422,7 +414,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             assertions,
             useCorsProxy,
             networkDiagnosticsEnabled,
-            endpoints: finalEndpoints,
+            endpoints: undefined,
             gracefulShutdown: parsedGracefulShutdown,
             monitoringUrl: monitoringUrl.trim() || undefined,
             isIdAutoIncrementEnabled,
@@ -795,46 +787,6 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
         e.target.value = '';
     };
 
-    // --- Website Crawler Handlers ---
-    const handleCrawlWebsite = async () => {
-        if (!websiteUrl) return;
-        setIsCrawling(true);
-        setCrawlError(null);
-        setDiscoveredResources([]);
-        setSelectedResources([]);
-        try {
-            const resources = await crawlWebsite(websiteUrl);
-            setDiscoveredResources(resources);
-        } catch (e) {
-            setCrawlError(e instanceof Error ? e.message : 'An unknown error occurred.');
-        } finally {
-            setIsCrawling(false);
-        }
-    };
-
-    const handleResourceSelectionChange = (url: string) => {
-        setSelectedResources(prev => 
-            prev.includes(url) ? prev.filter(u => u !== url) : [...prev, url]
-        );
-    };
-
-    const selectAllResources = (type?: 'html' | 'css' | 'js' | 'img' | 'all') => {
-        if (type === 'all') {
-            setSelectedResources(discoveredResources.map(r => r.url));
-        } else if (type) {
-            const resourceUrls = discoveredResources.filter(r => r.type === type).map(r => r.url);
-            // Check if all are already selected to toggle off
-            const allSelected = resourceUrls.every(url => selectedResources.includes(url));
-            if (allSelected) {
-                setSelectedResources(prev => prev.filter(url => !resourceUrls.includes(url)));
-            } else {
-                setSelectedResources(prev => [...new Set([...prev, ...resourceUrls])]);
-            }
-        } else {
-            setSelectedResources([]);
-        }
-    };
-
     const addDataGenRequest = () => {
         const defaultFormType = dataGenerationFormTypes.length > 0 ? dataGenerationFormTypes[0] : 'emails';
         setDataGenRequests([...dataGenRequests, { id: crypto.randomUUID(), formType: defaultFormType, count: 100, files: [] }]);
@@ -858,7 +810,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             <div className="flex -mb-px">
                 <TabButton mode="performance" currentMode={operationMode} setMode={setOperationMode} disabled={status === TestStatus.RUNNING} icon={<BeakerIcon className="w-5 h-5 mr-2" />}>API Performance</TabButton>
                 <TabButton mode="dataGeneration" currentMode={operationMode} setMode={setOperationMode} disabled={status === TestStatus.RUNNING} icon={<DatabaseIcon className="w-5 h-5 mr-2" />}>Data Generation</TabButton>
-                <TabButton mode="website" currentMode={operationMode} setMode={setOperationMode} disabled={status === TestStatus.RUNNING} icon={<GlobeAltIcon className="w-5 h-5 mr-2" />}>Website Test</TabButton>
+                <TabButton mode="website" currentMode={operationMode} setMode={setOperationMode} disabled={status === TestStatus.RUNNING} icon={<GlobeAltIcon className="w-5 h-5 mr-2" />}>Simple GET Test</TabButton>
             </div>
          </div>
         
@@ -1151,7 +1103,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
               <>
                 <AccordionStep
                     step={1}
-                    title="Define Target Website"
+                    title="Define Target URL"
                     isOpen={activeStep === 1}
                     onToggle={() => toggleStep(1)}
                     isComplete={isStep1Complete}
@@ -1161,58 +1113,14 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                     helpStepId={2}
                 >
                     <div className="space-y-4">
-                        <div className="flex items-end space-x-2">
-                            <div className="flex-grow">
-                                <label htmlFor="websiteUrl" className="flex items-center text-sm font-medium text-gray-300 mb-1">
-                                    Website URL
-                                    <Tooltip text="The full URL of the website to test (e.g., https://www.example.com). The tool will scan this page for assets like CSS, JS, and images." />
-                                </label>
-                                <input id="websiteUrl" type="url" value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="https://www.example.com" />
-                            </div>
-                            <button type="button" onClick={handleCrawlWebsite} disabled={isCrawling || !websiteUrl} className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded-md flex items-center space-x-2 disabled:opacity-50 min-w-[80px] justify-center">
-                                {isCrawling ? <SpinnerIcon className="w-5 h-5 animate-spin" /> : <MagnifyingGlassIcon className="w-5 h-5" />}
-                                <span>Scan</span>
-                            </button>
+                        <div>
+                            <label htmlFor="websiteUrl" className="flex items-center text-sm font-medium text-gray-300 mb-1">
+                                Target URL
+                                <Tooltip text="The full URL to send GET requests to (e.g., https://www.example.com/health)." />
+                            </label>
+                            <input id="websiteUrl" type="url" value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="https://www.example.com" />
                         </div>
-                        {crawlError && <p className="text-sm text-red-400">{crawlError}</p>}
                     </div>
-                </AccordionStep>
-
-                <AccordionStep
-                    step={2}
-                    title="Select Resources"
-                    isOpen={activeStep === 2}
-                    onToggle={() => toggleStep(2)}
-                    isComplete={isStep2Complete}
-                    isDisabled={!isStep1Complete}
-                    activeHelpTour={activeHelpTour}
-                    currentHelpStep={currentHelpStep}
-                    helpStepId={3}
-                >
-                     <div className="space-y-4">
-                        <p className="text-sm text-gray-400">Select which discovered resources to include in the load test. Only these URLs will receive simulated traffic.</p>
-                         <div className="flex items-center space-x-2 text-xs">
-                            <button onClick={() => selectAllResources('all')} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded-md">All</button>
-                            <button onClick={() => selectAllResources()} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded-md">None</button>
-                            <span className="text-gray-500">|</span>
-                            <button onClick={() => selectAllResources('html')} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded-md">Pages</button>
-                            <button onClick={() => selectAllResources('css')} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded-md">CSS</button>
-                            <button onClick={() => selectAllResources('js')} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded-md">JS</button>
-                            <button onClick={() => selectAllResources('img')} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded-md">Images</button>
-                        </div>
-                        <div className="max-h-60 overflow-y-auto space-y-2 p-2 bg-gray-800 rounded-md border border-gray-700">
-                            {discoveredResources.map(res => (
-                                <label key={res.url} className="flex items-center space-x-3 p-2 rounded-md hover:bg-gray-700/50 cursor-pointer">
-                                    <input type="checkbox" checked={selectedResources.includes(res.url)} onChange={() => handleResourceSelectionChange(res.url)} className="h-4 w-4 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500" />
-                                    <div className="flex items-center space-x-2 min-w-0">
-                                       <span className="flex-shrink-0">{res.type === 'html' ? <DocumentTextIcon className="w-4 h-4 text-blue-400"/> : res.type === 'css' ? <CodeBracketIcon className="w-4 h-4 text-purple-400"/> : res.type === 'js' ? <CodeBracketIcon className="w-4 h-4 text-yellow-400"/> : <PhotoIcon className="w-4 h-4 text-green-400"/>}</span>
-                                       <span className="text-xs font-mono truncate text-gray-300" title={res.url}>{new URL(res.url).pathname}</span>
-                                    </div>
-                                </label>
-                            ))}
-                        </div>
-                         <p className="text-xs text-right text-gray-400">{selectedResources.length} of {discoveredResources.length} resources selected.</p>
-                     </div>
                 </AccordionStep>
               </>
           )}
