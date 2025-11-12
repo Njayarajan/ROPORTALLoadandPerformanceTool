@@ -53,8 +53,18 @@ const ResponseTimeChart: React.FC<ResponseTimeChartProps> = ({ data, config }) =
     if (!data || data.length === 0 || !config) return [];
 
     const startTime = data[0].timestamp;
+    const lastResult = data[data.length - 1];
+    // If there's only one result, make duration 1s to avoid division by zero.
+    const actualDurationSeconds = lastResult && lastResult.timestamp > startTime 
+        ? Math.ceil((lastResult.timestamp - startTime) / 1000) 
+        : 1;
+
     const bucketSize = 1000; // 1 second buckets
-    const numBuckets = config.duration;
+
+    // Use the actual duration of results for iteration mode, or the configured duration for duration mode.
+    // This ensures the chart's timeline accurately reflects the test run.
+    const numBuckets = config.runMode === 'iterations' ? actualDurationSeconds : config.duration;
+    
     if (numBuckets <= 0) return [];
 
     const buckets = Array.from({ length: numBuckets }, (_, i) => {

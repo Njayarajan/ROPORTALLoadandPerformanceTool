@@ -197,6 +197,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
     const maxRampUp = limits?.max_ramp_up ?? 30;
     const minPacing = limits?.min_pacing ?? 1000;
     
+    const isUsersOverLimit = useMemo(() => parseInt(users, 10) > maxUsers, [users, maxUsers]);
+
     const isStep1Complete = useMemo(() => {
         if (operationMode === 'performance') return !!url && !!selectedPath && !!selectedMethod;
         if (operationMode === 'dataGeneration') return !!url && !!selectedPath && !!selectedMethod && !!selectedBasePayloadId;
@@ -1145,7 +1147,13 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                             Peak Concurrent Users
                             <Tooltip text={`The number of virtual users to simulate. For duration-based tests, this is the peak number of concurrent users to reach (${maxUsers} max). For iteration-based tests, this is the number of users running in parallel.`} />
                         </label>
-                        <input id="users" type="number" value={users} onChange={(e) => setUsers(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                        <input id="users" type="number" value={users} onChange={(e) => setUsers(e.target.value)} className={`w-full bg-gray-700 border rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 transition-colors ${isUsersOverLimit ? 'border-yellow-500' : 'border-gray-600'}`} />
+                         {isUsersOverLimit && (
+                            <div className="mt-2 p-2 bg-yellow-900/30 border border-yellow-500/50 text-yellow-300 text-xs rounded-md flex items-start space-x-2">
+                                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-0.5"/>
+                                <span>Your current plan has a limit of {maxUsers} users. The test will be capped at this value.</span>
+                            </div>
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-300 mb-1">Run Mode</label>
