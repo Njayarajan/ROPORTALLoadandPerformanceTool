@@ -150,12 +150,12 @@ export const verifyApiToken = async (
                 },
                 body: JSON.stringify({
                     url: targetUrl,
-                    options: { method: 'GET', headers: { 'Authorization': authHeaderValue } }
+                    options: { method: 'OPTIONS', headers: { 'Authorization': authHeaderValue } }
                 }),
             });
         } else {
             response = await fetch(targetUrl, {
-                method: 'GET',
+                method: 'OPTIONS',
                 headers: { 'Authorization': authHeaderValue },
             });
         }

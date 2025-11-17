@@ -401,7 +401,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                 return;
             }
         // FIX: The original check `operationMode !== 'website'` caused a cryptic TypeScript error. Replaced with the logically equivalent `operationMode === 'performance'` which is more explicit and resolves the type error.
-        } else if (operationMode !== 'website') {
+        } else if (operationMode === 'performance') {
              setFeedbackModalState({ isOpen: true, type: 'error', message: 'No endpoint selected. Please complete Step 1.' });
              return;
         }
