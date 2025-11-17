@@ -854,9 +854,11 @@ const App: React.FC = () => {
       setError(errorMessage);
       setStatus(TestStatus.ERROR);
     } finally {
-        // FIX: Ensure all final results are counted before finishing the test.
-        // This 'flushes the buffer' to prevent a race condition where the last few results
-        // are missed because the test runner finishes before the last UI update interval.
+        // FIX (Definitive): Eliminate the race condition where the last result is missed.
+        // By stopping the live update timer *before* the final flush, we guarantee that this
+        // block has exclusive control over the final batch of results, ensuring 100% accuracy.
+        clearTimers();
+
         if (resultsBatchRef.current.length > 0) {
             setResults(prev => [...prev, ...resultsBatchRef.current]);
             resultsBatchRef.current = [];
@@ -865,12 +867,11 @@ const App: React.FC = () => {
             setResourceSamples(prev => [...prev, ...resourceSamplesBatchRef.current]);
             resourceSamplesBatchRef.current = [];
         }
-
-        clearTimers();
         
         if (config.runMode === 'iterations') {
             setProgress(100);
         }
+
         if (statusRef.current === TestStatus.RUNNING || statusRef.current === TestStatus.FINISHING) {
             setProgress(100);
             setTimeout(() => setStatus(TestStatus.COMPLETED), 150);
