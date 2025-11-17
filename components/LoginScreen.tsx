@@ -54,7 +54,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ isTestMode, onBypassLogin }) 
                         />
                     </div>
                     <div>
-                        {/* Fix: The 'name' attribute is not valid on a <label> element and was causing a type error. */}
+                        {/* FIX: The 'name' attribute is not valid on a <label> element and was causing a type error. */}
                         <label htmlFor="password" className="block text-sm font-medium text-gray-400">Password</label>
                         <input
                             id="password"

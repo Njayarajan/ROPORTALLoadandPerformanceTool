@@ -93,8 +93,6 @@ serve(async (req) => {
     targetHeaders.delete('host');
     targetHeaders.delete('authorization');
     targetHeaders.delete('apikey');
-    targetHeaders.delete('content-type');
-    targetHeaders.delete('content-length');
     
     if (targetAuth) {
         targetHeaders.set('Authorization', targetAuth);

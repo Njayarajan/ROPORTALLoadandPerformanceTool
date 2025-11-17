@@ -409,6 +409,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                  : (selectedPath ? `${url.replace(/\/$/, '')}${selectedPath.path}` : url),
             method: operationMode === 'website' ? 'GET' : selectedMethod,
             body: operationMode === 'website' ? '' : (dataDrivenBody.length > 0 ? '' : body),
+            // FIX(l-1282): The check was incorrectly set to 'dataGeneration', which is not a possible mode within this function.
+            // It should clear the data-driven body for 'website' tests, as they are simple GET requests.
             dataDrivenBody: operationMode === 'website' ? [] : dataDrivenBody,
             dataDrivenMode: operationMode === 'website' ? 'loop' : dataDrivenMode,
             users: Math.max(1, Math.min(parsedUsers, maxUsers)),
@@ -842,6 +844,96 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
         setTimeout(() => setCopiedBlobId(null), 2000);
     };
 
+    const loadProfileContent = (
+        <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label htmlFor="users" className="flex items-center text-sm font-medium text-gray-300 mb-1">
+                        Peak Concurrent Users
+                        <Tooltip text={`The number of virtual users to simulate. For duration-based tests, this is the peak number of concurrent users to reach (${maxUsers} max). For iteration-based tests, this is the number of users running in parallel.`} />
+                    </label>
+                    <input id="users" type="number" value={users} onChange={(e) => setUsers(e.target.value)} className={`w-full bg-gray-700 border rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 transition-colors ${isUsersOverLimit ? 'border-yellow-500' : 'border-gray-600'}`} />
+                        {isUsersOverLimit && (
+                        <div className="mt-2 p-2 bg-yellow-900/30 border border-yellow-500/50 text-yellow-300 text-xs rounded-md flex items-start space-x-2">
+                            <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-0.5"/>
+                            <span>Your current plan has a limit of ${maxUsers} users. The test will be capped at this value.</span>
+                        </div>
+                    )}
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">Run Mode</label>
+                    <div className="flex bg-gray-800 p-1 rounded-lg">
+                        <button type="button" onClick={() => setRunMode('duration')} className={`w-1/2 py-1.5 text-sm font-medium rounded-md transition-colors ${runMode === 'duration' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}>By Duration</button>
+                        <button type="button" onClick={() => setRunMode('iterations')} className={`w-1/2 py-1.5 text-sm font-medium rounded-md transition-colors ${runMode === 'iterations' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}>By Iterations</button>
+                    </div>
+                </div>
+            </div>
+
+            {runMode === 'duration' ? (
+                <div>
+                    <label htmlFor="duration" className="flex items-center text-sm font-medium text-gray-300 mb-1">
+                        Test Duration (s)
+                        <Tooltip text={`The total length of the test in seconds. Your limit is ${maxDuration}s.`} />
+                    </label>
+                    <input id="duration" type="number" value={duration} onChange={(e) => setDuration(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                </div>
+            ) : (
+                <div>
+                    <label htmlFor="iterations" className="flex items-center text-sm font-medium text-gray-300 mb-1">
+                        Total Requests
+                        <Tooltip text={`The total number of submissions to complete across all users combined. The test will end once this number is reached.`} />
+                    </label>
+                    <input id="iterations" type="number" value={iterations} onChange={(e) => setIterations(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                </div>
+            )}
+            
+            <div>
+                <label htmlFor="pacing" className="flex items-center text-sm font-medium text-gray-300 mb-1">
+                    Request Pacing (ms)
+                    <Tooltip text={`The "think time" in milliseconds a virtual user waits after completing one request before starting the next. This applies to both Duration and Iteration modes. A value of 0 means requests are sent back-to-back for maximum throughput.`} />
+                </label>
+                <input id="pacing" type="number" value={pacing} onChange={(e) => setPacing(e.target.value)} step="100" className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white" />
+            </div>
+
+            {runMode === 'duration' && (
+                <>
+                    <div className="border-t border-gray-700 pt-4">
+                        <label className="block text-sm font-medium text-gray-300 mb-2">Load Profile</label>
+                        <div className="flex bg-gray-800 p-1 rounded-lg">
+                            <button type="button" onClick={() => setLoadProfile('ramp-up')} className={`w-1/2 py-1.5 text-sm font-medium rounded-md transition-colors ${loadProfile === 'ramp-up' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}>Ramp Up</button>
+                            <button type="button" onClick={() => setLoadProfile('stair-step')} className={`w-1/2 py-1.5 text-sm font-medium rounded-md transition-colors ${loadProfile === 'stair-step' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}>Stair Step</button>
+                        </div>
+                    </div>
+                    {loadProfile === 'ramp-up' ? (
+                        <div>
+                            <label htmlFor="rampUp" className="flex items-center text-sm font-medium text-gray-300 mb-1">
+                                Ramp-up Period (s)
+                                <Tooltip text={`The time taken to reach the peak number of users. Your limit is ${maxRampUp}s.`} />
+                            </label>
+                            <input id="rampUp" type="number" value={rampUp} onChange={(e) => setRampUp(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white" />
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-3 gap-4">
+                            <div>
+                                <label htmlFor="initialUsers" className="flex items-center text-sm font-medium text-gray-300 mb-1">Initial Users<Tooltip text="The number of users to start the test with." /></label>
+                                <input id="initialUsers" type="number" value={initialUsers} onChange={(e) => setInitialUsers(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white" />
+                            </div>
+                            <div>
+                                <label htmlFor="stepUsers" className="flex items-center text-sm font-medium text-gray-300 mb-1">Step Users<Tooltip text="The number of users to add in each step." /></label>
+                                <input id="stepUsers" type="number" value={stepUsers} onChange={(e) => setStepUsers(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white" />
+                            </div>
+                            <div>
+                                <label htmlFor="stepDuration" className="flex items-center text-sm font-medium text-gray-300 mb-1">Step Duration (s)<Tooltip text="The duration of each step." /></label>
+                                <input id="stepDuration" type="number" value={stepDuration} onChange={(e) => setStepDuration(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white" />
+                            </div>
+                        </div>
+                    )}
+                    <LoadProfileChart config={{ users: parseInt(users, 10) || 0, duration: parseInt(duration, 10) || 0, rampUp: parseInt(rampUp, 10) || 0, loadProfile, initialUsers: parseInt(initialUsers, 10) || 0, stepUsers: parseInt(stepUsers, 10) || 0, stepDuration: parseInt(stepDuration, 10) || 0, url: '', method: '', pacing: 0, body: '', assertions: [], runMode: runMode, iterations: parseInt(iterations, 10) || 0 }} />
+                </>
+            )}
+        </div>
+    );
+
     return (
     <div className="bg-gray-900 rounded-lg border border-gray-700 shadow-lg relative">
       <div className="p-6">
@@ -858,7 +950,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
         
         <div className="space-y-4">
           
-          {/* ----- API Performance & Data Generation Common Steps ----- */}
+          {/* ----- API Performance & Data Generation Steps ----- */}
           {(operationMode === 'performance' || operationMode === 'dataGeneration') && (
             <>
                 <AccordionStep
@@ -1178,9 +1270,23 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                         </div>
                     )}
                 </AccordionStep>
+                <AccordionStep
+                    step={3}
+                    title="Define Load Profile"
+                    isOpen={activeStep === 3}
+                    onToggle={() => toggleStep(3)}
+                    isComplete={true}
+                    isDisabled={!isStep1Complete || !isStep2Complete}
+                    activeHelpTour={activeHelpTour}
+                    currentHelpStep={currentHelpStep}
+                    helpStepId={operationMode === 'performance' ? 4 : (operationMode === 'website' ? 4 : undefined)}
+                >
+                    {loadProfileContent}
+                </AccordionStep>
             </>
           )}
 
+          {/* ----- Website Test Mode Steps ----- */}
           {operationMode === 'website' && (
               <>
                 <AccordionStep
@@ -1204,108 +1310,21 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                         </div>
                     </div>
                 </AccordionStep>
+                <AccordionStep
+                    step={2}
+                    title="Define Load Profile"
+                    isOpen={activeStep === 2}
+                    onToggle={() => toggleStep(2)}
+                    isComplete={true}
+                    isDisabled={!isStep1Complete}
+                    activeHelpTour={activeHelpTour}
+                    currentHelpStep={currentHelpStep}
+                    helpStepId={4}
+                >
+                    {loadProfileContent}
+                </AccordionStep>
               </>
           )}
-
-          <AccordionStep
-                step={3}
-                title="Define Load Profile"
-                isOpen={activeStep === 3}
-                onToggle={() => toggleStep(3)}
-                isComplete={true} // This step is always "complete" as it has defaults
-                isDisabled={!isStep1Complete || !isStep2Complete}
-                activeHelpTour={activeHelpTour}
-                currentHelpStep={currentHelpStep}
-                helpStepId={operationMode === 'performance' ? 4 : (operationMode === 'website' ? 4 : undefined)}
-           >
-             <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label htmlFor="users" className="flex items-center text-sm font-medium text-gray-300 mb-1">
-                            Peak Concurrent Users
-                            <Tooltip text={`The number of virtual users to simulate. For duration-based tests, this is the peak number of concurrent users to reach (${maxUsers} max). For iteration-based tests, this is the number of users running in parallel.`} />
-                        </label>
-                        <input id="users" type="number" value={users} onChange={(e) => setUsers(e.target.value)} className={`w-full bg-gray-700 border rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 transition-colors ${isUsersOverLimit ? 'border-yellow-500' : 'border-gray-600'}`} />
-                         {isUsersOverLimit && (
-                            <div className="mt-2 p-2 bg-yellow-900/30 border border-yellow-500/50 text-yellow-300 text-xs rounded-md flex items-start space-x-2">
-                                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-0.5"/>
-                                <span>Your current plan has a limit of ${maxUsers} users. The test will be capped at this value.</span>
-                            </div>
-                        )}
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-1">Run Mode</label>
-                        <div className="flex bg-gray-800 p-1 rounded-lg">
-                            <button type="button" onClick={() => setRunMode('duration')} className={`w-1/2 py-1.5 text-sm font-medium rounded-md transition-colors ${runMode === 'duration' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}>By Duration</button>
-                            <button type="button" onClick={() => setRunMode('iterations')} className={`w-1/2 py-1.5 text-sm font-medium rounded-md transition-colors ${runMode === 'iterations' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}>By Iterations</button>
-                        </div>
-                    </div>
-                </div>
-
-                {runMode === 'duration' ? (
-                    <div>
-                        <label htmlFor="duration" className="flex items-center text-sm font-medium text-gray-300 mb-1">
-                            Test Duration (s)
-                            <Tooltip text={`The total length of the test in seconds. Your limit is ${maxDuration}s.`} />
-                        </label>
-                        <input id="duration" type="number" value={duration} onChange={(e) => setDuration(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
-                    </div>
-                ) : (
-                    <div>
-                        <label htmlFor="iterations" className="flex items-center text-sm font-medium text-gray-300 mb-1">
-                            Total Requests
-                            <Tooltip text={`The total number of submissions to complete across all users combined. The test will end once this number is reached.`} />
-                        </label>
-                        <input id="iterations" type="number" value={iterations} onChange={(e) => setIterations(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
-                    </div>
-                )}
-                
-                <div>
-                    <label htmlFor="pacing" className="flex items-center text-sm font-medium text-gray-300 mb-1">
-                        Request Pacing (ms)
-                        <Tooltip text={`The "think time" in milliseconds a virtual user waits after completing one request before starting the next. This applies to both Duration and Iteration modes. A value of 0 means requests are sent back-to-back for maximum throughput.`} />
-                    </label>
-                    <input id="pacing" type="number" value={pacing} onChange={(e) => setPacing(e.target.value)} step="100" className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white" />
-                </div>
-
-                {runMode === 'duration' && (
-                    <>
-                        <div className="border-t border-gray-700 pt-4">
-                            <label className="block text-sm font-medium text-gray-300 mb-2">Load Profile</label>
-                            <div className="flex bg-gray-800 p-1 rounded-lg">
-                                <button type="button" onClick={() => setLoadProfile('ramp-up')} className={`w-1/2 py-1.5 text-sm font-medium rounded-md transition-colors ${loadProfile === 'ramp-up' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}>Ramp Up</button>
-                                <button type="button" onClick={() => setLoadProfile('stair-step')} className={`w-1/2 py-1.5 text-sm font-medium rounded-md transition-colors ${loadProfile === 'stair-step' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}>Stair Step</button>
-                            </div>
-                        </div>
-                        {loadProfile === 'ramp-up' ? (
-                            <div>
-                                <label htmlFor="rampUp" className="flex items-center text-sm font-medium text-gray-300 mb-1">
-                                    Ramp-up Period (s)
-                                    <Tooltip text={`The time taken to reach the peak number of users. Your limit is ${maxRampUp}s.`} />
-                                </label>
-                                <input id="rampUp" type="number" value={rampUp} onChange={(e) => setRampUp(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white" />
-                            </div>
-                        ) : (
-                            <div className="grid grid-cols-3 gap-4">
-                                <div>
-                                    <label htmlFor="initialUsers" className="flex items-center text-sm font-medium text-gray-300 mb-1">Initial Users<Tooltip text="The number of users to start the test with." /></label>
-                                    <input id="initialUsers" type="number" value={initialUsers} onChange={(e) => setInitialUsers(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white" />
-                                </div>
-                                <div>
-                                    <label htmlFor="stepUsers" className="flex items-center text-sm font-medium text-gray-300 mb-1">Step Users<Tooltip text="The number of users to add in each step." /></label>
-                                    <input id="stepUsers" type="number" value={stepUsers} onChange={(e) => setStepUsers(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white" />
-                                </div>
-                                <div>
-                                    <label htmlFor="stepDuration" className="flex items-center text-sm font-medium text-gray-300 mb-1">Step Duration (s)<Tooltip text="The duration of each step." /></label>
-                                    <input id="stepDuration" type="number" value={stepDuration} onChange={(e) => setStepDuration(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white" />
-                                </div>
-                            </div>
-                        )}
-                        <LoadProfileChart config={{ users: parseInt(users, 10) || 0, duration: parseInt(duration, 10) || 0, rampUp: parseInt(rampUp, 10) || 0, loadProfile, initialUsers: parseInt(initialUsers, 10) || 0, stepUsers: parseInt(stepUsers, 10) || 0, stepDuration: parseInt(stepDuration, 10) || 0, url: '', method: '', pacing: 0, body: '', assertions: [], runMode: runMode, iterations: parseInt(iterations, 10) || 0 }} />
-                    </>
-                )}
-            </div>
-           </AccordionStep>
         </div>
         
         <div className="mt-6 pt-6 border-t border-gray-700">
