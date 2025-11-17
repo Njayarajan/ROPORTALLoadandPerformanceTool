@@ -64,7 +64,7 @@ serve(async (req) => {
     }
 
     // --- Mode 2: Pass-through requests (for FormData/file uploads) ---
-    console.log('Proxying pass-through request (e.g., file upload)...');
+    console.log('Proxying pass-through FormData request...');
     const targetUrlString = req.headers.get('x-proxy-target-url');
     if (!targetUrlString) {
         throw new Error('x-proxy-target-url header is required for non-JSON proxy requests.');
@@ -80,9 +80,12 @@ serve(async (req) => {
         });
     }
 
-    // Read the entire request body into an ArrayBuffer before forwarding.
-    const bodyBuffer = await req.arrayBuffer();
-
+    // --- FINAL FIX ---
+    // The definitive way to handle proxied FormData.
+    // We must let Deno's `fetch` implementation re-serialize the form data
+    // to generate a new, correct `Content-Type` header with a valid boundary.
+    const body = await req.formData();
+    
     const targetHeaders = new Headers(req.headers);
 
     // Swap the proxy's auth token for the target API's auth token.
@@ -95,11 +98,10 @@ serve(async (req) => {
     targetHeaders.delete('authorization'); // This is the Supabase token
     targetHeaders.delete('apikey');
     
-    // --- DEFINITIVE FIX ---
-    // The browser automatically adds a Content-Length header for FormData.
-    // We must remove it and let the server-side fetch() implementation
-    // recalculate it based on the bodyBuffer. A stale or incorrect
-    // Content-Length is a common cause of cryptic network errors.
+    // CRITICAL: We MUST remove the original Content-Type and Content-Length headers.
+    // The server-side fetch() will generate new, correct ones based on the FormData body.
+    // Failure to do this results in a boundary mismatch and a failed request.
+    targetHeaders.delete('content-type');
     targetHeaders.delete('content-length');
     
     // Add back the target API's auth token with the standard 'Authorization' header name.
@@ -110,7 +112,7 @@ serve(async (req) => {
     const response = await fetch(targetUrl.toString(), {
         method: req.method,
         headers: targetHeaders,
-        body: bodyBuffer.byteLength > 0 ? bodyBuffer : null,
+        body: body, // Pass the FormData object directly
     });
 
     const newHeaders = new Headers(response.headers);

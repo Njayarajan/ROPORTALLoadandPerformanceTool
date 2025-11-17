@@ -142,7 +142,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
     const [networkDiagnosticsEnabled, setNetworkDiagnosticsEnabled] = useState(true);
     const [gracefulShutdown, setGracefulShutdown] = useState('20');
     const [monitoringUrl, setMonitoringUrl] = useState('');
-    const [isIdAutoIncrementEnabled, setIsIdAutoIncrementEnabled] = useState(true);
+    const [isIdAutoIncrementEnabled, setIsIdAutoIncrementEnabled] = useState(false);
     const [idPool, setIdPool] = useState<string[]>([]);
     const [idPoolingMode, setIdPoolingMode] = useState<'sequential' | 'random'>('sequential');
 
@@ -1229,7 +1229,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                          {isUsersOverLimit && (
                             <div className="mt-2 p-2 bg-yellow-900/30 border border-yellow-500/50 text-yellow-300 text-xs rounded-md flex items-start space-x-2">
                                 <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0 mt-0.5"/>
-                                <span>Your current plan has a limit of {maxUsers} users. The test will be capped at this value.</span>
+                                <span>Your current plan has a limit of ${maxUsers} users. The test will be capped at this value.</span>
                             </div>
                         )}
                     </div>
