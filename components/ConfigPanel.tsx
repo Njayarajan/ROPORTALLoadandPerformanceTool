@@ -409,7 +409,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                  : (selectedPath ? `${url.replace(/\/$/, '')}${selectedPath.path}` : url),
             method: operationMode === 'website' ? 'GET' : selectedMethod,
             body: operationMode === 'website' ? '' : (dataDrivenBody.length > 0 ? '' : body),
-            // FIX(l-1282): The check was incorrectly set to 'dataGeneration', which is not a possible mode within this function.
+            // FIX: The check was incorrectly set to 'dataGeneration'.
             // It should clear the data-driven body for 'website' tests, as they are simple GET requests.
             dataDrivenBody: operationMode === 'website' ? [] : dataDrivenBody,
             dataDrivenMode: operationMode === 'website' ? 'loop' : dataDrivenMode,

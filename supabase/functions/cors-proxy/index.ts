@@ -94,6 +94,13 @@ serve(async (req) => {
     targetHeaders.delete('authorization');
     targetHeaders.delete('apikey');
     
+    // CRITICAL FIX: When re-creating a request with a FormData body, we MUST let the
+    // `fetch` API generate its own `Content-Type` header with the correct boundary.
+    // The original `Content-Type` header from the client will have a different boundary
+    // and must be removed to avoid a conflict. The same applies to `Content-Length`.
+    targetHeaders.delete('content-type');
+    targetHeaders.delete('content-length');
+    
     if (targetAuth) {
         targetHeaders.set('Authorization', targetAuth);
     }
