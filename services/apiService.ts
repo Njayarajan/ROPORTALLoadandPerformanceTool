@@ -127,14 +127,14 @@ export const uploadFileToBlobStorage = async (
     const trimmedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
     const targetUrl = `${trimmedBaseUrl}/api/Blob/uploadBlob?Id=${id}`;
 
-    const headers: Record<string, string> = {};
+    const headersForTarget: Record<string, string> = {};
 
     // Add custom headers from config, but explicitly avoid setting Content-Type
     // as the browser must set it with the correct boundary for FormData.
     if (headersConfig) {
         for (const header of headersConfig) {
             if (header.enabled && header.key && header.key.toLowerCase() !== 'content-type') {
-                headers[header.key] = header.value;
+                headersForTarget[header.key] = header.value;
             }
         }
     }
@@ -144,7 +144,7 @@ export const uploadFileToBlobStorage = async (
         if (!/^bearer /i.test(authHeaderValue)) {
             authHeaderValue = `Bearer ${authHeaderValue}`;
         }
-        headers['Authorization'] = authHeaderValue;
+        headersForTarget['Authorization'] = authHeaderValue;
     }
 
     try {
@@ -157,30 +157,42 @@ export const uploadFileToBlobStorage = async (
 
             const functionsUrl = `${supabaseUrl}/functions/v1/cors-proxy`;
             
-            // Add proxy-specific and supabase headers
-            const proxyHeaders = {
-                ...headers,
-                'x-proxy-target-url': targetUrl,
-                'Authorization': `Bearer ${session.access_token}`,
-                'apikey': supabaseAnonKey,
-            };
+            const proxyHeaders: Record<string, string> = {};
+
+            // Copy all custom headers for the target, renaming 'Authorization' to avoid collision.
+            for (const key in headersForTarget) {
+                if (Object.prototype.hasOwnProperty.call(headersForTarget, key)) {
+                    if (key.toLowerCase() === 'authorization') {
+                        // Rename the target's auth header so it doesn't conflict with the proxy's auth.
+                        proxyHeaders['x-proxy-target-authorization'] = headersForTarget[key];
+                    } else {
+                        proxyHeaders[key] = headersForTarget[key];
+                    }
+                }
+            }
+            
+            // Add proxy-specific headers
+            proxyHeaders['x-proxy-target-url'] = targetUrl;
+            proxyHeaders['Authorization'] = `Bearer ${session.access_token}`; // For the proxy function
+            proxyHeaders['apikey'] = supabaseAnonKey;
 
             response = await fetch(functionsUrl, {
                 method: 'POST',
                 headers: proxyHeaders,
                 body: formData,
             });
+
         } else {
             response = await fetch(targetUrl, {
                 method: 'POST',
-                headers,
+                headers: headersForTarget,
                 body: formData,
             });
         }
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`File upload failed with status ${response.status}: ${errorText}`);
+            throw new Error(`File upload failed with status ${response.status}: ${errorText || response.statusText}`);
         }
 
         const result = await response.json();
