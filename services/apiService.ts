@@ -177,14 +177,14 @@ export const uploadFileToBlobStorage = async (
             proxyHeaders['apikey'] = supabaseAnonKey;
 
             response = await fetch(functionsUrl, {
-                method: 'POST',
+                method: 'PUT',
                 headers: proxyHeaders,
                 body: formData,
             });
 
         } else {
             response = await fetch(targetUrl, {
-                method: 'POST',
+                method: 'PUT',
                 headers: headersForTarget,
                 body: formData,
             });

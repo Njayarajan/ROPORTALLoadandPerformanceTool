@@ -409,8 +409,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                  : (selectedPath ? `${url.replace(/\/$/, '')}${selectedPath.path}` : url),
             method: operationMode === 'website' ? 'GET' : selectedMethod,
             body: operationMode === 'website' ? '' : (dataDrivenBody.length > 0 ? '' : body),
-            // FIX: The check was incorrectly set to 'dataGeneration'.
-            // It should clear the data-driven body for 'website' tests, as they are simple GET requests.
+            // FIX: The data-driven body should be cleared for 'website' tests, not 'dataGeneration' tests.
+            // Website tests are simple GET requests and cannot have a body.
             dataDrivenBody: operationMode === 'website' ? [] : dataDrivenBody,
             dataDrivenMode: operationMode === 'website' ? 'loop' : dataDrivenMode,
             users: Math.max(1, Math.min(parsedUsers, maxUsers)),
