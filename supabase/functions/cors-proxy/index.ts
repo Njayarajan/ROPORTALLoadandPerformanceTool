@@ -6,32 +6,33 @@ console.info('CORS Proxy server starting...');
 // SECURITY: A strict allowlist of hostnames the proxy is allowed to connect to.
 const ALLOWED_HOSTS = [
   'www2.communityprotection.wa.gov.au',
-  // Add other known, trusted API domains here.
   'roportal-api-sys.npr-03-ase.appserviceenvironment.net',
 ];
 
 
 serve(async (req) => {
   // --- DYNAMIC CORS HEADER GENERATION ---
+  // This is the most robust way to handle CORS preflight requests.
+  // It dynamically allows whatever headers the browser is requesting.
   const requestedHeaders = req.headers.get('Access-Control-Request-Headers');
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': requestedHeaders || 'authorization, x-client-info, apikey, content-type, x-proxy-target-url',
+    'Access-Control-Allow-Headers': requestedHeaders || 'authorization, x-client-info, apikey, content-type, x-proxy-target-url, x-proxy-target-authorization',
   };
 
-  // Handle CORS preflight requests
+  // Handle CORS preflight requests immediately.
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    // This proxy has two modes.
-    // 1. JSON-wrapped mode: The client sends a JSON payload with the target URL and options.
-    // 2. Pass-through mode: The client sends a direct request (like a file upload) with a special header indicating the target URL.
-    
-    // Check for JSON-wrapped mode first
-    if (req.headers.get('content-type')?.includes('application/json')) {
+    const contentType = req.headers.get('content-type');
+
+    // --- Mode 1: JSON-wrapped requests ---
+    // This is for standard API tests from the performance runner.
+    if (contentType?.includes('application/json')) {
+        console.log('Proxying JSON-wrapped request...');
         const { url, options } = await req.json();
 
         if (!url) {
@@ -62,7 +63,8 @@ serve(async (req) => {
         });
     }
 
-    // Fallback to pass-through mode for FormData (file uploads) and other types
+    // --- Mode 2: Pass-through requests (for FormData/file uploads) ---
+    console.log('Proxying pass-through request (e.g., file upload)...');
     const targetUrlString = req.headers.get('x-proxy-target-url');
     if (!targetUrlString) {
         throw new Error('x-proxy-target-url header is required for non-JSON proxy requests.');
@@ -78,19 +80,26 @@ serve(async (req) => {
         });
     }
 
+    // --- CRITICAL FIX ---
+    // Read the entire request body into an ArrayBuffer before forwarding.
+    // Passing the raw `req.body` (a ReadableStream) can be unreliable in Deno Deploy
+    // and cause the connection to drop, resulting in a "Failed to fetch" error on the client.
+    // Buffering it first ensures the entire payload is received before the proxy sends its own request.
+    const bodyBuffer = await req.arrayBuffer();
+
     const targetHeaders = new Headers(req.headers);
 
-    // 1. Get target API's auth token from custom header and remove it.
+    // Swap the proxy's auth token for the target API's auth token.
     const targetAuth = targetHeaders.get('x-proxy-target-authorization');
     targetHeaders.delete('x-proxy-target-authorization');
     
-    // 2. Remove all proxy-specific and Supabase auth headers.
+    // Remove all headers specific to the proxy or Supabase infra.
     targetHeaders.delete('x-proxy-target-url');
     targetHeaders.delete('host');
-    targetHeaders.delete('authorization');
+    targetHeaders.delete('authorization'); // This is the Supabase token
     targetHeaders.delete('apikey');
     
-    // 3. Add back the target API's auth token with the correct header name.
+    // Add back the target API's auth token with the standard 'Authorization' header name.
     if (targetAuth) {
         targetHeaders.set('Authorization', targetAuth);
     }
@@ -98,10 +107,9 @@ serve(async (req) => {
     const response = await fetch(targetUrl.toString(), {
         method: req.method,
         headers: targetHeaders,
-        body: req.body,
+        body: bodyBuffer,
     });
 
-    // Add CORS headers to the response before sending it back to the client
     const newHeaders = new Headers(response.headers);
     for (const [key, value] of Object.entries(corsHeaders)) {
         newHeaders.set(key, value);
@@ -114,6 +122,7 @@ serve(async (req) => {
     });
 
   } catch (err) {
+    console.error('Error in CORS proxy:', err);
     const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
     return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
