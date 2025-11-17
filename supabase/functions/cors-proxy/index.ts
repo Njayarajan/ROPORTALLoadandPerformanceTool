@@ -80,11 +80,7 @@ serve(async (req) => {
         });
     }
 
-    // --- CRITICAL FIX ---
     // Read the entire request body into an ArrayBuffer before forwarding.
-    // Passing the raw `req.body` (a ReadableStream) can be unreliable in Deno Deploy
-    // and cause the connection to drop, resulting in a "Failed to fetch" error on the client.
-    // Buffering it first ensures the entire payload is received before the proxy sends its own request.
     const bodyBuffer = await req.arrayBuffer();
 
     const targetHeaders = new Headers(req.headers);
@@ -99,6 +95,13 @@ serve(async (req) => {
     targetHeaders.delete('authorization'); // This is the Supabase token
     targetHeaders.delete('apikey');
     
+    // --- DEFINITIVE FIX ---
+    // The browser automatically adds a Content-Length header for FormData.
+    // We must remove it and let the server-side fetch() implementation
+    // recalculate it based on the bodyBuffer. A stale or incorrect
+    // Content-Length is a common cause of cryptic network errors.
+    targetHeaders.delete('content-length');
+    
     // Add back the target API's auth token with the standard 'Authorization' header name.
     if (targetAuth) {
         targetHeaders.set('Authorization', targetAuth);
@@ -107,7 +110,7 @@ serve(async (req) => {
     const response = await fetch(targetUrl.toString(), {
         method: req.method,
         headers: targetHeaders,
-        body: bodyBuffer,
+        body: bodyBuffer.byteLength > 0 ? bodyBuffer : null,
     });
 
     const newHeaders = new Headers(response.headers);
