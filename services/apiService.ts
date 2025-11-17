@@ -107,102 +107,66 @@ export const parseOpenApiSpec = (specContent: string): { parsedData: ParsedApiDa
 };
 
 /**
- * Uploads a file to the blob storage endpoint.
- * @param file The file to upload.
- * @param id The ID to pass as a query parameter (e.g., NCOS ID).
+ * Sends a lightweight request to a known endpoint to verify an authentication token.
+ * @param token The Bearer token to verify.
  * @param baseUrl The base URL of the API.
- * @returns The blobId returned from the server.
+ * @param useCorsProxy Whether to route the request through the CORS proxy.
+ * @returns An object indicating success, status code, and a message.
  */
-export const uploadFileToBlobStorage = async (
-    file: File,
-    id: string,
+export const verifyApiToken = async (
+    token: string,
     baseUrl: string,
-    authToken?: string,
-    headersConfig?: Header[],
     useCorsProxy?: boolean
-): Promise<string> => {
-    const formData = new FormData();
-    formData.append('File', file);
-
-    const trimmedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-    const targetUrl = `${trimmedBaseUrl}/api/Blob/uploadBlob?Id=${id}`;
-
-    const headersForTarget: Record<string, string> = {};
-
-    // Add custom headers from config, but explicitly avoid setting Content-Type
-    // as the browser must set it with the correct boundary for FormData.
-    if (headersConfig) {
-        for (const header of headersConfig) {
-            if (header.enabled && header.key && header.key.toLowerCase() !== 'content-type') {
-                headersForTarget[header.key] = header.value;
-            }
-        }
+): Promise<{ success: boolean; status: number; message: string }> => {
+    if (!token.trim()) {
+        return { success: false, status: 0, message: 'Token cannot be empty.' };
+    }
+    if (!baseUrl.trim()) {
+        return { success: false, status: 0, message: 'Base URL must be set.' };
     }
 
-    if (authToken) {
-        let authHeaderValue = authToken;
-        if (!/^bearer /i.test(authHeaderValue)) {
-            authHeaderValue = `Bearer ${authHeaderValue}`;
-        }
-        headersForTarget['Authorization'] = authHeaderValue;
+    // A simple, harmless GET endpoint from the spec to test authentication.
+    const validationEndpoint = '/api/ReferenceData';
+    const targetUrl = `${baseUrl.replace(/\/$/, '')}${validationEndpoint}`;
+    
+    let authHeaderValue = token;
+    if (!/^bearer /i.test(authHeaderValue)) {
+        authHeaderValue = `Bearer ${authHeaderValue}`;
     }
 
     try {
         let response;
         if (useCorsProxy) {
             const { data: { session } } = await supabase.auth.getSession();
-            if (!session) {
-                throw new Error("Not logged in. A user session is required to use the CORS proxy for file uploads.");
-            }
+            if (!session) throw new Error("A user session is required to use the CORS proxy.");
 
             const functionsUrl = `${supabaseUrl}/functions/v1/cors-proxy`;
-            
-            const proxyHeaders: Record<string, string> = {};
-
-            // Copy all custom headers for the target, renaming 'Authorization' to avoid collision.
-            for (const key in headersForTarget) {
-                if (Object.prototype.hasOwnProperty.call(headersForTarget, key)) {
-                    if (key.toLowerCase() === 'authorization') {
-                        // Rename the target's auth header so it doesn't conflict with the proxy's auth.
-                        proxyHeaders['x-proxy-target-authorization'] = headersForTarget[key];
-                    } else {
-                        proxyHeaders[key] = headersForTarget[key];
-                    }
-                }
-            }
-            
-            // Add proxy-specific headers
-            proxyHeaders['x-proxy-target-url'] = targetUrl;
-            proxyHeaders['Authorization'] = `Bearer ${session.access_token}`; // For the proxy function
-            proxyHeaders['apikey'] = supabaseAnonKey;
-
             response = await fetch(functionsUrl, {
-                method: 'PUT',
-                headers: proxyHeaders,
-                body: formData,
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${session.access_token}`,
+                    'Content-Type': 'application/json',
+                    'apikey': supabaseAnonKey,
+                },
+                body: JSON.stringify({
+                    url: targetUrl,
+                    options: { method: 'GET', headers: { 'Authorization': authHeaderValue } }
+                }),
             });
-
         } else {
             response = await fetch(targetUrl, {
-                method: 'PUT',
-                headers: headersForTarget,
-                body: formData,
+                method: 'GET',
+                headers: { 'Authorization': authHeaderValue },
             });
         }
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`File upload failed with status ${response.status}: ${errorText || response.statusText}`);
+        if (response.ok) {
+            return { success: true, status: response.status, message: 'Token is valid.' };
+        } else {
+            return { success: false, status: response.status, message: `Verification failed: ${response.statusText}` };
         }
-
-        const result = await response.json();
-        if (!result.blobId) {
-            throw new Error("File upload response did not include a blobId.");
-        }
-
-        return result.blobId;
-    } catch (error) {
-        console.error("Error uploading file to blob storage:", error);
-        throw error; // Re-throw to be handled by the caller
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown network error occurred.';
+        return { success: false, status: 0, message: `Network Error: ${errorMessage}` };
     }
 };

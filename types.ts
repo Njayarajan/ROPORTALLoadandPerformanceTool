@@ -19,6 +19,8 @@ export enum TestStatus {
   ERROR = 'ERROR',
 }
 
+export type TokenStatus = 'unverified' | 'verifying' | 'verified' | 'failed';
+
 export type ValidationStatus = 'running' | 'stopping' | 'success' | 'failed' | 'stopped';
 
 export type OperationMode = 'performance' | 'dataGeneration' | 'website';

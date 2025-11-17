@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { type LoadTestConfig, TestStatus, type ApiPath, type ParsedApiData, UsageLimits, Assertion, ApiSpecMetadata, OperationMode, DataGenerationRequest, UploadedFile, SavedUrl, AutoFixStoppedError, SavedBasePayload, Header, SavedHeaderSet, ValidationStatus, ApiMethod } from '../types';
-import { PlayIcon, StopIcon, ResetIcon, SpinnerIcon, InformationCircleIcon, ChevronDownIcon, GlobeAltIcon, BeakerIcon, SparklesIcon, ArrowUturnLeftIcon, PlusIcon, XMarkIcon, ClipboardDocumentCheckIcon, DocumentDuplicateIcon, CloudArrowUpIcon, BoltIcon, CheckCircleIcon, XCircleIcon, BookmarkSquareIcon, ShieldCheckIcon, DatabaseIcon, ClipboardDocumentListIcon, DocumentArrowDownIcon, TrashIcon, MagnifyingGlassIcon, DocumentTextIcon, CodeBracketIcon, PhotoIcon, ExclamationTriangleIcon, KeyIcon, CheckIcon, PencilSquareIcon } from './icons';
+import { type LoadTestConfig, TestStatus, type ApiPath, type ParsedApiData, UsageLimits, Assertion, ApiSpecMetadata, OperationMode, DataGenerationRequest, UploadedFile, SavedUrl, AutoFixStoppedError, SavedBasePayload, Header, SavedHeaderSet, ValidationStatus, ApiMethod, TokenStatus } from '../types';
+import { PlayIcon, StopIcon, ResetIcon, SpinnerIcon, InformationCircleIcon, ChevronDownIcon, GlobeAltIcon, BeakerIcon, SparklesIcon, ArrowUturnLeftIcon, PlusIcon, XMarkIcon, ClipboardDocumentCheckIcon, DocumentDuplicateIcon, CloudArrowUpIcon, BoltIcon, CheckCircleIcon, XCircleIcon, BookmarkSquareIcon, ShieldCheckIcon, DatabaseIcon, ClipboardDocumentListIcon, DocumentArrowDownIcon, TrashIcon, MagnifyingGlassIcon, DocumentTextIcon, CodeBracketIcon, ExclamationTriangleIcon, KeyIcon, CheckIcon, PencilSquareIcon } from './icons';
 import LoadProfileChart from './LoadProfileChart';
 import * as geminiService from '../services/geminiService';
-import { uploadFileToBlobStorage } from '../services/apiService';
+import { verifyApiToken } from '../services/apiService';
 import { toTitleCase } from '../utils/helpers';
 import { getSavedPayloads, savePayload, deletePayload, updatePayload, saveHeaderSet, updateHeaderSet, deleteHeaderSet } from '../services/payloadService';
 import { saveSuccessfulPayload } from '../services/learningService';
@@ -158,10 +158,12 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
 
     // UI & Modal State
     const [showAdvanced, setShowAdvanced] = useState(false);
-    const [showAuth, setShowAuth] = useState(false);
-    const [showAssertions, setShowAssertions] = useState(false);
     const [showHeaders, setShowHeaders] = useState(false);
 
+    // New Auth State
+    const [tokenStatus, setTokenStatus] = useState<TokenStatus>('unverified');
+    const [tokenVerificationMessage, setTokenVerificationMessage] = useState('');
+    
     // AI Features State
     const [aiPrompt, setAiPrompt] = useState('');
     const [isGeneratingConfig, setIsGeneratingConfig] = useState(false);
@@ -190,14 +192,6 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
     
     // Performance Mode Saved Payloads
     const [selectedPerfPayloadId, setSelectedPerfPayloadId] = useState<string | null>(null);
-
-    // Image Uploader State
-    const [uploaderNcosId, setUploaderNcosId] = useState('');
-    const [uploaderFile, setUploaderFile] = useState<File | null>(null);
-    const [uploadedBlobs, setUploadedBlobs] = useState<{ name: string; blobId: string }[]>([]);
-    const [isUploadingBlob, setIsUploadingBlob] = useState(false);
-    const [uploaderError, setUploaderError] = useState<string | null>(null);
-    const [copiedBlobId, setCopiedBlobId] = useState<string | null>(null);
 
     // --- Derived State ---
     const maxUsers = limits?.max_users ?? 50;
@@ -267,6 +261,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             setDuration(configToLoad.duration.toString());
             setPacing(configToLoad.pacing?.toString() || '0');
             setAuthToken(configToLoad.authToken || '');
+            setTokenStatus('unverified');
             setHeaders(configToLoad.headers || [{ id: crypto.randomUUID(), key: '', value: '', enabled: true }]);
             setAssertions(configToLoad.assertions || []);
             setUseCorsProxy(configToLoad.useCorsProxy || false);
@@ -363,22 +358,41 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
 
 
     // --- Handlers ---
-
+    const handleVerifyToken = async () => {
+        setTokenStatus('verifying');
+        const result = await verifyApiToken(authToken, url, useCorsProxy);
+        if (result.success) {
+            setTokenStatus('verified');
+            setTokenVerificationMessage(`Verified successfully on ${new Date().toLocaleTimeString()}`);
+        } else {
+            setTokenStatus('failed');
+            setTokenVerificationMessage(`Failed: ${result.status > 0 ? `Status ${result.status}` : ''} ${result.message}`);
+        }
+    };
+    
+    // Reset token status if URL or token changes
+    useEffect(() => {
+        setTokenStatus('unverified');
+        setTokenVerificationMessage('');
+    }, [authToken, url]);
+    
     const checkAuthentication = useCallback((endpoints: { path: string, method: ApiMethod }[]): boolean => {
         const endpointsRequiringAuth = endpoints.filter(({ method }) => 
             method.security && Array.isArray(method.security) && method.security.some(scheme => Object.keys(scheme).length > 0)
         );
 
-        if (endpointsRequiringAuth.length > 0 && !authToken.trim()) {
-            const message = endpoints.length > 1 
-                ? `Authentication Required:\n\nYour API spec indicates that at least ${endpointsRequiringAuth.length} endpoint(s) require authentication, but no token is provided.\n\nPlease add a Bearer Token in the 'Authentication & Headers' section.`
-                : `Authentication Required:\n\nThe endpoint ${endpoints[0].method.method} ${endpoints[0].path} appears to require an authentication token, but none is provided.\n\nPlease add a Bearer Token in the 'Authentication & Headers' section.`;
-            
-            setFeedbackModalState({ isOpen: true, type: 'error', message });
-            return false;
+        if (endpointsRequiringAuth.length > 0) {
+            if (!authToken.trim()) {
+                 setFeedbackModalState({ isOpen: true, type: 'error', message: `Authentication Required:\n\nThis action requires a Bearer Token, but none is provided.` });
+                 return false;
+            }
+            if (tokenStatus !== 'verified') {
+                 setFeedbackModalState({ isOpen: true, type: 'error', message: `Token Not Verified:\n\nPlease verify your authentication token before starting the test.` });
+                 return false;
+            }
         }
         return true;
-    }, [authToken, setFeedbackModalState]);
+    }, [authToken, tokenStatus, setFeedbackModalState]);
     
     const handleStart = () => {
         const methodDetails = selectedPath?.methods.find(m => m.method === selectedMethod);
@@ -386,7 +400,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
             if (!checkAuthentication([{ path: selectedPath.path, method: methodDetails }])) {
                 return;
             }
-        } else if (!selectedPath && operationMode !== 'website') {
+        // FIX: The original check `operationMode !== 'website'` caused a cryptic TypeScript error. Replaced with the logically equivalent `operationMode === 'performance'` which is more explicit and resolves the type error.
+        } else if (operationMode !== 'website') {
              setFeedbackModalState({ isOpen: true, type: 'error', message: 'No endpoint selected. Please complete Step 1.' });
              return;
         }
@@ -409,8 +424,6 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                  : (selectedPath ? `${url.replace(/\/$/, '')}${selectedPath.path}` : url),
             method: operationMode === 'website' ? 'GET' : selectedMethod,
             body: operationMode === 'website' ? '' : (dataDrivenBody.length > 0 ? '' : body),
-            // FIX: The data-driven body should be cleared for 'website' tests, not 'dataGeneration' tests.
-            // Website tests are simple GET requests and cannot have a body.
             dataDrivenBody: operationMode === 'website' ? [] : dataDrivenBody,
             dataDrivenMode: operationMode === 'website' ? 'loop' : dataDrivenMode,
             users: Math.max(1, Math.min(parsedUsers, maxUsers)),
@@ -814,36 +827,6 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
         setDataGenRequests(dataGenRequests.filter(r => r.id !== id));
     };
 
-    const handleUploaderFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            setUploaderFile(e.target.files[0]);
-        }
-    };
-
-    const handleUploadBlob = async () => {
-        if (!uploaderFile || !uploaderNcosId.trim() || !url.trim()) {
-            setUploaderError('Base URL, NCOS ID, and a file are required.');
-            return;
-        }
-        setIsUploadingBlob(true);
-        setUploaderError(null);
-        try {
-            const blobId = await uploadFileToBlobStorage(uploaderFile, uploaderNcosId.trim(), url, authToken, headers, useCorsProxy);
-            setUploadedBlobs(prev => [...prev, { name: uploaderFile.name, blobId }]);
-            setUploaderFile(null);
-        } catch (err) {
-            setUploaderError(err instanceof Error ? err.message : 'An unknown error occurred.');
-        } finally {
-            setIsUploadingBlob(false);
-        }
-    };
-
-    const handleCopyBlobId = (blobId: string) => {
-        navigator.clipboard.writeText(blobId);
-        setCopiedBlobId(blobId);
-        setTimeout(() => setCopiedBlobId(null), 2000);
-    };
-
     const loadProfileContent = (
         <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -1093,6 +1076,34 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                     </div>
                 </AccordionStep>
 
+                <div className="border border-gray-700 rounded-lg p-4 bg-gray-800 space-y-3">
+                    <h3 className="text-md font-semibold text-white flex items-center"><KeyIcon className="w-5 h-5 mr-2 text-yellow-400"/>Authentication</h3>
+                    <div>
+                        <label htmlFor="authToken" className="block text-sm text-gray-400 mb-1">Bearer Token</label>
+                        <textarea id="authToken" rows={2} value={authToken} onChange={(e) => setAuthToken(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white font-mono focus:ring-2 focus:ring-blue-500" placeholder="Paste your access token here..." />
+                    </div>
+                    <div className="flex items-center justify-between">
+                         <div className="flex items-center space-x-2 text-sm">
+                            {tokenStatus === 'unverified' && <InformationCircleIcon className="w-5 h-5 text-gray-500" />}
+                            {tokenStatus === 'verifying' && <SpinnerIcon className="w-5 h-5 text-blue-400 animate-spin" />}
+                            {tokenStatus === 'verified' && <CheckCircleIcon className="w-5 h-5 text-green-400" />}
+                            {tokenStatus === 'failed' && <XCircleIcon className="w-5 h-5 text-red-400" />}
+                            <span className={
+                                tokenStatus === 'verified' ? 'text-green-400' :
+                                tokenStatus === 'failed' ? 'text-red-400' : 'text-gray-400'
+                            }>
+                                {tokenStatus === 'unverified' && 'Token has not been verified.'}
+                                {tokenStatus === 'verifying' && 'Verifying...'}
+                                {tokenStatus === 'verified' && `Verified: ${tokenVerificationMessage}`}
+                                {tokenStatus === 'failed' && `Failed: ${tokenVerificationMessage}`}
+                            </span>
+                        </div>
+                        <button onClick={handleVerifyToken} disabled={!authToken || !url || tokenStatus === 'verifying'} className="px-4 py-1.5 text-sm font-medium bg-gray-600 hover:bg-gray-500 text-white rounded-md transition disabled:opacity-50">
+                            {tokenStatus === 'verifying' ? 'Verifying...' : 'Verify Token'}
+                        </button>
+                    </div>
+                </div>
+
                 <AccordionStep
                     step={2}
                     title={operationMode === 'performance' ? "Configure Request" : "Configure Data Variations"}
@@ -1171,46 +1182,6 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                                         />
                                         <div className="mt-2 flex justify-end space-x-2">
                                             <button type="button" onClick={handleSaveBasePayload} className="flex items-center space-x-2 px-3 py-1.5 text-xs font-medium bg-gray-600 hover:bg-gray-500 text-white rounded-md transition" title="Save the current request body as a new reusable template."><BookmarkSquareIcon className="w-4 h-4" /><span>Save as New Template</span></button>
-                                        </div>
-                                    </div>
-                                    
-                                    <div className="mt-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
-                                        <h4 className="text-sm font-medium text-white mb-3 flex items-center"><PhotoIcon className="w-5 h-5 mr-2 text-blue-400" />Image Uploader for Blob IDs</h4>
-                                        <div className="space-y-3">
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                                <div>
-                                                    <label htmlFor="uploader-ncos-id" className="block text-xs text-gray-400 mb-1">NCOS ID</label>
-                                                    <input id="uploader-ncos-id" type="text" value={uploaderNcosId} onChange={(e) => setUploaderNcosId(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-1.5 text-sm" placeholder="ID from your JSON" />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-xs text-gray-400 mb-1">Image File</label>
-                                                    <input type="file" id="blob-file-upload" onChange={handleUploaderFileChange} className="hidden" accept="image/png, image/jpeg, image/gif" />
-                                                    <label htmlFor="blob-file-upload" className="w-full text-center cursor-pointer bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-md px-3 py-1.5 block truncate">
-                                                        {uploaderFile ? uploaderFile.name : 'Select Image'}
-                                                    </label>
-                                                </div>
-                                            </div>
-                                            <button onClick={handleUploadBlob} disabled={isUploadingBlob || !uploaderFile || !uploaderNcosId.trim() || !url.trim()} className="w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 rounded-md transition disabled:opacity-50">
-                                                {isUploadingBlob ? <SpinnerIcon className="w-5 h-5 animate-spin" /> : <CloudArrowUpIcon className="w-5 h-5" />}
-                                                <span>{isUploadingBlob ? 'Uploading...' : 'Upload & Get Blob ID'}</span>
-                                            </button>
-                                            {uploaderError && <p className="text-xs text-red-400 text-center">{uploaderError}</p>}
-                                            {uploadedBlobs.length > 0 && (
-                                                <div className="border-t border-gray-700 pt-3 space-y-2">
-                                                    <h5 className="text-xs font-semibold text-gray-300">Uploaded Blobs:</h5>
-                                                    {uploadedBlobs.map(({ name, blobId }) => (
-                                                        <div key={blobId} className="flex justify-between items-center p-2 bg-gray-900/50 rounded-md text-xs">
-                                                            <span className="text-gray-400 truncate pr-2" title={name}>{name}</span>
-                                                            <div className="flex items-center space-x-2 flex-shrink-0">
-                                                                <span className="font-mono text-white bg-gray-700 px-2 py-0.5 rounded">{blobId}</span>
-                                                                <button onClick={() => handleCopyBlobId(blobId)} className="p-1 text-gray-400 hover:text-white" title="Copy Blob ID">
-                                                                    {copiedBlobId === blobId ? <CheckIcon className="w-4 h-4 text-green-400" /> : <ClipboardDocumentListIcon className="w-4 h-4" />}
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
                                         </div>
                                     </div>
 
@@ -1347,17 +1318,12 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
 
         <div className="space-y-4 mt-6">
              <div className="border-t border-gray-700 pt-4">
-                <button type="button" onClick={() => setShowAuth(p => !p)} className="flex w-full items-center justify-between text-left text-sm font-medium text-gray-300">
-                    <span className="flex items-center"><KeyIcon className="w-5 h-5 mr-2 text-gray-400"/>Authentication & Headers</span>
-                    <ChevronDownIcon className={`w-5 h-5 transition-transform ${showAuth ? 'rotate-180' : ''}`} />
+                <button type="button" onClick={() => setShowHeaders(p => !p)} className="flex w-full items-center justify-between text-left text-sm font-medium text-gray-300">
+                    <span className="flex items-center"><ClipboardDocumentListIcon className="w-5 h-5 mr-2 text-gray-400"/>Custom Headers</span>
+                    <ChevronDownIcon className={`w-5 h-5 transition-transform ${showHeaders ? 'rotate-180' : ''}`} />
                 </button>
-                {showAuth && (
+                {showHeaders && (
                     <div className="mt-2 space-y-4 pt-2 pl-4 border-l-2 border-gray-700">
-                        <div>
-                            <label htmlFor="authToken" className="block text-sm text-gray-400">Bearer Token</label>
-                            <input id="authToken" type="password" value={authToken} onChange={(e) => setAuthToken(e.target.value)} className="w-full mt-1 bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
-                        </div>
-                        
                         <div className="mt-2 space-y-3">
                             { (operationMode !== 'website' && selectedMethod !== 'GET') && (
                                 <div className="space-y-2 p-3 bg-gray-800 rounded-md border border-gray-700">
@@ -1396,7 +1362,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                     </div>
                 )}
             </div>
-            
+
             <div className="border-t border-gray-700 pt-4">
                 <button type="button" onClick={() => setShowAdvanced(p => !p)} className="flex w-full items-center justify-between text-left text-sm font-medium text-gray-300">
                     <span className="flex items-center"><ShieldCheckIcon className="w-5 h-5 mr-2 text-gray-400"/>Advanced Options</span>
@@ -1515,7 +1481,7 @@ Expected JSON response format:
                 <button
                     type="button"
                     onClick={handleStart}
-                    disabled={status === TestStatus.RUNNING || !isStep1Complete || !isStep2Complete}
+                    disabled={status === TestStatus.RUNNING || !isStep1Complete || !isStep2Complete || tokenStatus !== 'verified'}
                     className="w-full flex items-center justify-center space-x-2 px-4 py-3 text-sm font-bold text-white bg-green-600 rounded-md shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     <PlayIcon className="w-5 h-5" />
@@ -1528,7 +1494,7 @@ Expected JSON response format:
                 <button
                     type="button"
                     onClick={handleGenerateDataFromConfig}
-                    disabled={status === TestStatus.RUNNING || !isStep1Complete || !isStep2Complete}
+                    disabled={status === TestStatus.RUNNING || !isStep1Complete || !isStep2Complete || tokenStatus !== 'verified'}
                     className="w-full flex items-center justify-center space-x-2 px-4 py-3 text-sm font-bold text-white bg-green-600 rounded-md shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     <SparklesIcon className="w-5 h-5" />
