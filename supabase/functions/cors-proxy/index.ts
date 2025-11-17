@@ -1,3 +1,4 @@
+
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 
 console.info('CORS Proxy server starting...');
@@ -9,13 +10,21 @@ const ALLOWED_HOSTS = [
   'roportal-api-sys.npr-03-ase.appserviceenvironment.net',
 ];
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-proxy-target-url',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-};
 
 serve(async (req) => {
+  // --- DYNAMIC CORS HEADER GENERATION ---
+  // This is the key fix. The browser's preflight OPTIONS request includes a list of
+  // headers it wants to send. We must reflect those headers back to the browser
+  // to tell it they are all allowed. A static list of headers will fail if the
+  // client sends any custom header not on that list.
+  const requestedHeaders = req.headers.get('Access-Control-Request-Headers');
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    // Reflect the requested headers, or fall back to a default set.
+    'Access-Control-Allow-Headers': requestedHeaders || 'authorization, x-client-info, apikey, content-type, x-proxy-target-url',
+  };
+
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
