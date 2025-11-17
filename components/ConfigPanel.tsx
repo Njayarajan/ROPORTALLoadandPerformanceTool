@@ -191,6 +191,14 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
     // Performance Mode Saved Payloads
     const [selectedPerfPayloadId, setSelectedPerfPayloadId] = useState<string | null>(null);
 
+    // Image Uploader State
+    const [uploaderNcosId, setUploaderNcosId] = useState('');
+    const [uploaderFile, setUploaderFile] = useState<File | null>(null);
+    const [uploadedBlobs, setUploadedBlobs] = useState<{ name: string; blobId: string }[]>([]);
+    const [isUploadingBlob, setIsUploadingBlob] = useState(false);
+    const [uploaderError, setUploaderError] = useState<string | null>(null);
+    const [copiedBlobId, setCopiedBlobId] = useState<string | null>(null);
+
     // --- Derived State ---
     const maxUsers = limits?.max_users ?? 50;
     const maxDuration = limits?.max_duration ?? 60;
@@ -804,6 +812,36 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
         setDataGenRequests(dataGenRequests.filter(r => r.id !== id));
     };
 
+    const handleUploaderFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files[0]) {
+            setUploaderFile(e.target.files[0]);
+        }
+    };
+
+    const handleUploadBlob = async () => {
+        if (!uploaderFile || !uploaderNcosId.trim() || !url.trim()) {
+            setUploaderError('Base URL, NCOS ID, and a file are required.');
+            return;
+        }
+        setIsUploadingBlob(true);
+        setUploaderError(null);
+        try {
+            const blobId = await uploadFileToBlobStorage(uploaderFile, uploaderNcosId.trim(), url, authToken, headers, useCorsProxy);
+            setUploadedBlobs(prev => [...prev, { name: uploaderFile.name, blobId }]);
+            setUploaderFile(null);
+        } catch (err) {
+            setUploaderError(err instanceof Error ? err.message : 'An unknown error occurred.');
+        } finally {
+            setIsUploadingBlob(false);
+        }
+    };
+
+    const handleCopyBlobId = (blobId: string) => {
+        navigator.clipboard.writeText(blobId);
+        setCopiedBlobId(blobId);
+        setTimeout(() => setCopiedBlobId(null), 2000);
+    };
+
     return (
     <div className="bg-gray-900 rounded-lg border border-gray-700 shadow-lg relative">
       <div className="p-6">
@@ -1044,6 +1082,46 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                                         </div>
                                     </div>
                                     
+                                    <div className="mt-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
+                                        <h4 className="text-sm font-medium text-white mb-3 flex items-center"><PhotoIcon className="w-5 h-5 mr-2 text-blue-400" />Image Uploader for Blob IDs</h4>
+                                        <div className="space-y-3">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                <div>
+                                                    <label htmlFor="uploader-ncos-id" className="block text-xs text-gray-400 mb-1">NCOS ID</label>
+                                                    <input id="uploader-ncos-id" type="text" value={uploaderNcosId} onChange={(e) => setUploaderNcosId(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-1.5 text-sm" placeholder="ID from your JSON" />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs text-gray-400 mb-1">Image File</label>
+                                                    <input type="file" id="blob-file-upload" onChange={handleUploaderFileChange} className="hidden" accept="image/png, image/jpeg, image/gif" />
+                                                    <label htmlFor="blob-file-upload" className="w-full text-center cursor-pointer bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-md px-3 py-1.5 block truncate">
+                                                        {uploaderFile ? uploaderFile.name : 'Select Image'}
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <button onClick={handleUploadBlob} disabled={isUploadingBlob || !uploaderFile || !uploaderNcosId.trim() || !url.trim()} className="w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 rounded-md transition disabled:opacity-50">
+                                                {isUploadingBlob ? <SpinnerIcon className="w-5 h-5 animate-spin" /> : <CloudArrowUpIcon className="w-5 h-5" />}
+                                                <span>{isUploadingBlob ? 'Uploading...' : 'Upload & Get Blob ID'}</span>
+                                            </button>
+                                            {uploaderError && <p className="text-xs text-red-400 text-center">{uploaderError}</p>}
+                                            {uploadedBlobs.length > 0 && (
+                                                <div className="border-t border-gray-700 pt-3 space-y-2">
+                                                    <h5 className="text-xs font-semibold text-gray-300">Uploaded Blobs:</h5>
+                                                    {uploadedBlobs.map(({ name, blobId }) => (
+                                                        <div key={blobId} className="flex justify-between items-center p-2 bg-gray-900/50 rounded-md text-xs">
+                                                            <span className="text-gray-400 truncate pr-2" title={name}>{name}</span>
+                                                            <div className="flex items-center space-x-2 flex-shrink-0">
+                                                                <span className="font-mono text-white bg-gray-700 px-2 py-0.5 rounded">{blobId}</span>
+                                                                <button onClick={() => handleCopyBlobId(blobId)} className="p-1 text-gray-400 hover:text-white" title="Copy Blob ID">
+                                                                    {copiedBlobId === blobId ? <CheckIcon className="w-4 h-4 text-green-400" /> : <ClipboardDocumentListIcon className="w-4 h-4" />}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
                                     {rawApiSpec && (
                                         <div className="mt-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
                                             <p className="text-sm font-medium text-white mb-3 flex items-center"><SparklesIcon className="w-5 h-5 mr-2 text-blue-400" />AI Assistant</p>
@@ -1175,8 +1253,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                 ) : (
                     <div>
                         <label htmlFor="iterations" className="flex items-center text-sm font-medium text-gray-300 mb-1">
-                            Total Iterations
-                            <Tooltip text={`The total number of requests to send across all users. The test will stop once this number is reached.`} />
+                            Total Requests
+                            <Tooltip text={`The total number of submissions to complete across all users combined. The test will end once this number is reached.`} />
                         </label>
                         <input id="iterations" type="number" value={iterations} onChange={(e) => setIterations(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
                     </div>

@@ -1,4 +1,5 @@
-import { ParsedApiData, ApiPath, ApiMethod } from '../types';
+import { ParsedApiData, ApiPath, ApiMethod, Header } from '../types';
+import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 
 /**
  * Parses a given OpenAPI specification string.
@@ -115,20 +116,67 @@ export const parseOpenApiSpec = (specContent: string): { parsedData: ParsedApiDa
 export const uploadFileToBlobStorage = async (
     file: File,
     id: string,
-    baseUrl: string
+    baseUrl: string,
+    authToken?: string,
+    headersConfig?: Header[],
+    useCorsProxy?: boolean
 ): Promise<string> => {
     const formData = new FormData();
     formData.append('File', file);
 
-    // Ensure the URL is constructed correctly without double slashes.
     const trimmedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-    const url = `${trimmedBaseUrl}/api/Blob/uploadBlob?Id=${id}`;
+    const targetUrl = `${trimmedBaseUrl}/api/Blob/uploadBlob?Id=${id}`;
+
+    const headers: Record<string, string> = {};
+
+    // Add custom headers from config, but explicitly avoid setting Content-Type
+    // as the browser must set it with the correct boundary for FormData.
+    if (headersConfig) {
+        for (const header of headersConfig) {
+            if (header.enabled && header.key && header.key.toLowerCase() !== 'content-type') {
+                headers[header.key] = header.value;
+            }
+        }
+    }
+
+    if (authToken) {
+        let authHeaderValue = authToken;
+        if (!/^bearer /i.test(authHeaderValue)) {
+            authHeaderValue = `Bearer ${authHeaderValue}`;
+        }
+        headers['Authorization'] = authHeaderValue;
+    }
 
     try {
-        const response = await fetch(url, {
-            method: 'POST',
-            body: formData,
-        });
+        let response;
+        if (useCorsProxy) {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) {
+                throw new Error("Not logged in. A user session is required to use the CORS proxy for file uploads.");
+            }
+
+            const functionsUrl = `${supabaseUrl}/functions/v1/cors-proxy`;
+            
+            // Add proxy-specific and supabase headers
+            const proxyHeaders = {
+                ...headers,
+                'x-proxy-target-url': targetUrl,
+                'Authorization': `Bearer ${session.access_token}`,
+                'apikey': supabaseAnonKey,
+            };
+
+            response = await fetch(functionsUrl, {
+                method: 'POST',
+                headers: proxyHeaders,
+                body: formData,
+            });
+        } else {
+            response = await fetch(targetUrl, {
+                method: 'POST',
+                headers,
+                body: formData,
+            });
+        }
 
         if (!response.ok) {
             const errorText = await response.text();
