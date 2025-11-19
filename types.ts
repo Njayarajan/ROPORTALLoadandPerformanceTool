@@ -4,10 +4,12 @@
 
 
 
+
 export class AutoFixStoppedError extends Error {
     constructor(message: string, public lastPayload: string | null) {
         super(message);
         this.name = 'AutoFixStoppedError';
+        Object.setPrototypeOf(this, AutoFixStoppedError.prototype);
     }
 }
 

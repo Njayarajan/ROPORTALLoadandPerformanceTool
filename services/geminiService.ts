@@ -62,6 +62,22 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
+ * Helper to strip HTML tags from a string.
+ * Used to clean up HTML error responses so the AI focuses on the text content.
+ */
+function stripHtml(html: string): string {
+    if (!html) return '';
+    // Basic regex strip to avoid DOM overhead/security issues in non-browser envs (though this is client-side).
+    // It replaces tags with a space to prevent words merging.
+    let text = html.replace(/<[^>]*>?/gm, ' ');
+    // Decode common entities
+    text = text.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    // Collapse whitespace
+    return text.replace(/\s+/g, ' ').trim();
+}
+
+
+/**
  * Executes a single request for a virtual user, including diagnostics and assertions.
  * This function contains the core logic of making one API call.
  */
@@ -329,31 +345,31 @@ export async function runLoadTest(
         performance.clearResourceTimings();
     }
 
-    if (config.monitoringUrl) {
-        const resourcePollController = new AbortController();
-        const intervalId = setInterval(async () => {
-            try {
-                const res = await fetch(config.monitoringUrl!, { signal: resourcePollController.signal });
-                if (!res.ok) {
-                    console.warn(`Resource monitor fetch failed: ${res.status}`);
-                    return;
-                }
-                const sample: { cpu: number; memory: number } = await res.json();
-                onResourceSample({ timestamp: Date.now(), cpu: sample.cpu, memory: sample.memory });
-            } catch (e) {
-                if ((e as Error).name !== 'AbortError') {
-                    console.error('Resource monitor poll failed:', e);
-                }
-            }
-        }, 2000); // Poll every 2 seconds
-
-        softStopSignal.addEventListener('abort', () => {
-            clearInterval(intervalId);
-            resourcePollController.abort();
-        });
-    }
-    
     try {
+        if (config.monitoringUrl) {
+            const resourcePollController = new AbortController();
+            const intervalId = setInterval(async () => {
+                try {
+                    const res = await fetch(config.monitoringUrl!, { signal: resourcePollController.signal });
+                    if (!res.ok) {
+                        console.warn(`Resource monitor fetch failed: ${res.status}`);
+                        return;
+                    }
+                    const sample: { cpu: number; memory: number } = await res.json();
+                    onResourceSample({ timestamp: Date.now(), cpu: sample.cpu, memory: sample.memory });
+                } catch (e) {
+                    if ((e as Error).name !== 'AbortError') {
+                        console.error('Resource monitor poll failed:', e);
+                    }
+                }
+            }, 2000); // Poll every 2 seconds
+
+            softStopSignal.addEventListener('abort', () => {
+                clearInterval(intervalId);
+                resourcePollController.abort();
+            });
+        }
+        
         // --- ITERATION MODE (Worker Pool) ---
         if (config.runMode === 'iterations') {
             const iterationCounter = {
@@ -955,40 +971,50 @@ export async function generateConfigFromPrompt(prompt: string, apiSpec: any): Pr
 }
 
 /**
- * Helper to extract clean JSON from an AI response that might include Markdown.
+ * Helper to extract clean JSON from an AI response by finding the first valid outer JSON object/array.
+ * Uses a stack to track matching braces, ignoring surrounding text or markdown.
  */
 function cleanJsonOutput(text: string): string {
-    let cleanJson = text.trim();
+    let start = text.indexOf('{');
+    const arrayStart = text.indexOf('[');
     
-    // Case 1: Markdown code blocks
-    const markdownMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (markdownMatch) {
-        cleanJson = markdownMatch[1].trim();
-    } else {
-        // Case 2: Raw JSON with potential preamble/postscript
-        const firstOpen = text.indexOf('{');
-        const lastClose = text.lastIndexOf('}');
-        const firstArrayOpen = text.indexOf('[');
-        const lastArrayClose = text.lastIndexOf(']');
+    if (arrayStart !== -1 && (start === -1 || arrayStart < start)) {
+        start = arrayStart;
+    }
 
-        if (firstOpen !== -1 && lastClose !== -1) {
-            // Check if array is the outer container
-            if (firstArrayOpen !== -1 && lastArrayClose !== -1 && firstArrayOpen < firstOpen && lastArrayClose > lastClose) {
-                cleanJson = text.substring(firstArrayOpen, lastArrayClose + 1);
-            } else {
-                cleanJson = text.substring(firstOpen, lastClose + 1);
+    if (start === -1) return text.trim();
+
+    let openCount = 0;
+    let inString = false;
+    let escaped = false;
+    
+    for (let i = start; i < text.length; i++) {
+        const char = text[i];
+        if (inString) {
+            if (char === '\\' && !escaped) escaped = true;
+            else if (char === '"' && !escaped) inString = false;
+            else escaped = false;
+        } else {
+            if (char === '"') inString = true;
+            else if (char === '{' || char === '[') openCount++;
+            else if (char === '}' || char === ']') {
+                openCount--;
+                if (openCount === 0) return text.substring(start, i + 1);
             }
-        } else if (firstArrayOpen !== -1 && lastArrayClose !== -1) {
-            cleanJson = text.substring(firstArrayOpen, lastArrayClose + 1);
         }
     }
-    return cleanJson;
+    // If we get here, braces didn't match (malformed or truncated). Fallback to finding last closing.
+    const lastClose = text.lastIndexOf(text[start] === '{' ? '}' : ']');
+    if (lastClose > start) return text.substring(start, lastClose + 1);
+    
+    return text.trim();
 }
 
 export async function generateSampleBody(
   apiSpec: any,
   path: string,
   method: string,
+  baseUrl: string = '', // New: helpful for context, though not strictly used in generation unless specified
   formFocus: string = 'all',
   customInstructions: string = '',
   existingBody: string | null = null,
@@ -999,6 +1025,12 @@ export async function generateSampleBody(
     const client = getAiClient();
     const learnedPayloads = await getLearnedPayloads(path, method);
     const now = new Date().toISOString();
+    
+    // Extract specific endpoint definition to give context on parameters (path/query) which might cause errors
+    let endpointDef = {};
+    if (apiSpec && apiSpec.paths && apiSpec.paths[path] && apiSpec.paths[path][method.toLowerCase()]) {
+        endpointDef = apiSpec.paths[path][method.toLowerCase()];
+    }
 
     // Default instruction for fresh generation
     let systemInstruction = `You are an API testing assistant. Your task is to generate a valid JSON request body based on an OpenAPI specification. The JSON should be realistic, use correct data types, and be ready to use. Only output the raw JSON.`;
@@ -1013,10 +1045,13 @@ export async function generateSampleBody(
       ${learnedPayloads.map(p => `\`\`\`json\n${JSON.stringify(p, null, 2)}\n\`\`\``).join('\n\n')}
       ` : ''}
 
-      **API Schema:**
+      **API Components Schema:**
       ${JSON.stringify(apiSpec.components.schemas, null, 2)}
       
-      Target Schema: Definition for '${path}'.
+      **Endpoint Definition (Parameters & Body):**
+      ${JSON.stringify(endpointDef, null, 2)}
+      
+      Target Schema: Definition associated with '${path}'.
     `;
 
     // Logic for Fresh Generation
@@ -1035,8 +1070,6 @@ export async function generateSampleBody(
     else {
         // If we have a history of errors, this is a "Fix" operation.
         if (errorHistory && errorHistory.length > 0) {
-            const attemptNumber = errorHistory.length + 1;
-            
             // 1. Specialized Persona for Debugging
             systemInstruction = `You are a Senior API Integration Engineer and Payload Debugger. Your ONLY goal is to fix a failing JSON payload so it satisfies the server's validation rules.
             
@@ -1045,6 +1078,7 @@ export async function generateSampleBody(
             2.  **Inspect the Schema:** Compare the failing payload against the OpenAPI definition. Look for type mismatches (string vs int), missing required fields, or incorrect enums.
             3.  **Apply the Fix:** Modify the JSON to resolve the specific error reported. Do not make unnecessary changes to unrelated fields.
             4.  **HTML Error Handling:** If the error body is HTML (e.g., a 404 or 500 page), extract the title or error code text to understand the context. A 500 often means a field format is wrong. A 404 might mean the ID in the payload doesn't match the URL.
+            5.  **No Repetition:** Do NOT output the exact same payload that just failed. You MUST change something to address the error.
             
             **Output Rules:**
             - Output ONLY the corrected valid JSON.
@@ -1053,7 +1087,7 @@ export async function generateSampleBody(
             `;
             
             const previousErrors = errorHistory.map((err, i) => 
-                `[Attempt ${i + 1}] Status: ${err.status}\nServer Response: ${err.body.substring(0, 500)}` // Truncate long errors
+                `[Attempt ${i + 1}] Status: ${err.status}\nServer Response (Text Only): ${err.body}`
             ).join('\n\n');
 
             prompt = `
@@ -1063,6 +1097,9 @@ export async function generateSampleBody(
 
             **API Schema (Source of Truth):**
             ${JSON.stringify(apiSpec.components.schemas, null, 2)}
+            
+            **Endpoint Definition:**
+            ${JSON.stringify(endpointDef, null, 2)}
 
             **Validation History (Most Recent Error is Critical):**
             ${previousErrors}
@@ -1075,6 +1112,7 @@ export async function generateSampleBody(
             - If the error says "Required", ADD that field.
             - If the error is "500 Internal Server Error", check data types strictly against the schema (e.g. UUIDs, DateTimes).
             - Ensure 'submitDateTime' is set to \`${now}\`.
+            - **DO NOT** output the same JSON as before.
             
             Return ONLY the fixed JSON.
             `;
@@ -1086,11 +1124,14 @@ export async function generateSampleBody(
         }
     }
 
-    const modelConfig: any = { systemInstruction };
+    const modelConfig: any = { 
+        systemInstruction,
+        responseMimeType: "application/json", // Enforce JSON output for robustness
+    };
     
     // Use higher thinking budget for Auto-Fix to allow analysis of the error log
     if (errorHistory && errorHistory.length > 0) {
-        modelConfig.thinkingConfig = { thinkingBudget: 1024 }; 
+        modelConfig.thinkingConfig = { thinkingBudget: 2048 }; 
     }
 
     const response = await client.models.generateContent({
@@ -1157,6 +1198,7 @@ export async function generateAndValidateBody(
                 apiSpec,
                 path,
                 method,
+                baseUrl,
                 formFocus,
                 customInstructions,
                 currentBody,
@@ -1238,13 +1280,15 @@ export async function generateAndValidateBody(
                 }
                 return currentBody;
             } else {
-                const errorBody = await response.text();
-                errorHistory.push({ status: response.status, body: errorBody });
+                const rawErrorBody = await response.text();
+                const cleanedErrorBody = stripHtml(rawErrorBody).substring(0, 2000); // Limit length for context window
+                
+                errorHistory.push({ status: response.status, body: cleanedErrorBody });
                 onLog(`❌ Request failed with status ${response.status}. Preparing for next attempt.`);
-                onLog(`Error Response:\n${errorBody}`);
+                onLog(`Error Response (Excerpt):\n${cleanedErrorBody.substring(0, 500)}...`);
                 
                 if (attempt === maxAttempts) {
-                    throw new Error(`Auto-fix failed after ${maxAttempts} attempts. Last error: ${errorBody}`);
+                    throw new Error(`Auto-fix failed after ${maxAttempts} attempts. Last error: ${cleanedErrorBody}`);
                 }
             }
         } catch (err) {
@@ -1370,8 +1414,8 @@ async function generateFieldArray(
         });
 
         jsonText = response.text.trim();
-        const jsonMatch = jsonText.match(/```json\n([\s\S]*?)\n```/);
-        const parsableText = jsonMatch ? jsonMatch[1] : jsonText;
+        // Clean JSON output using the robust function
+        const parsableText = cleanJsonOutput(jsonText);
 
         const parsedData = JSON.parse(parsableText);
 
@@ -1626,14 +1670,15 @@ export async function generateAndValidatePersonalizedData(
                 }
                 return assembledPayloadString;
             } else {
-                const errorBody = await response.text();
-                const newError = { status: response.status, body: errorBody };
-                errorHistory.push(newError);
+                const rawErrorBody = await response.text();
+                const cleanedErrorBody = stripHtml(rawErrorBody).substring(0, 2000);
+                
+                errorHistory.push({ status: response.status, body: cleanedErrorBody });
                 onLog(`❌ Validation failed with status ${response.status}. The API rejected the data. Instructing AI to fix it.`);
-                onLog(`Error Response:\n${errorBody}`);
+                onLog(`Error Response (Excerpt):\n${cleanedErrorBody.substring(0, 500)}...`);
                 
                 if (attempt === maxAttempts) {
-                    throw new Error(`Data generation failed after ${maxAttempts} attempts. Last error: ${errorBody}`);
+                    throw new Error(`Data generation failed after ${maxAttempts} attempts. Last error: ${cleanedErrorBody}`);
                 }
             }
         } catch (err) {

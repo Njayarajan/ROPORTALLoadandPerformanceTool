@@ -1,5 +1,3 @@
-
-
 import React, { useState } from 'react';
 import { XMarkIcon, ChevronDownIcon, QuestionMarkCircleIcon, SparklesIcon } from './icons';
 
@@ -144,11 +142,10 @@ const HelpGuidePanel: React.FC<HelpGuidePanelProps> = (props) => {
                         </AccordionItem>
 
                         <AccordionItem {...props} title="How to Test a Website" tourId="website">
-                           <p>First, select the <strong>'Website Test'</strong> tab to measure how a live website's assets perform under load.</p>
-                           <p>In <strong>Step 1: Define Target Website</strong>, enter the full <strong>URL</strong> of the website you want to test and click the <strong>'Scan'</strong> button.</p>
-                           <p>In <strong>Step 2: Select Resources</strong>, the app will list all discovered assets (pages, scripts, images). <strong>Check the boxes</strong> for the resources you want to include in the load test.</p>
-                           <p>In <strong>Step 3: Define Load Profile</strong>, use the sliders to configure the load. Set the number of <strong>Peak Virtual Users</strong> and the total <strong>Test Duration</strong>.</p>
-                           <p>You're ready to go! Click the <strong>'Start Test'</strong> button at the bottom to simulate traffic hitting the selected website resources.</p>
+                           <p>First, select the <strong>'Simple GET Test'</strong> tab to measure how a live website's assets perform under load.</p>
+                           <p>In <strong>Step 1: Define Target URL</strong>, enter the full <strong>URL</strong> of the website you want to test (e.g., `https://google.com`).</p>
+                           <p>In <strong>Step 2: Define Load Profile</strong>, use the settings to configure the load. Set the number of <strong>Peak Virtual Users</strong> and the total <strong>Test Duration</strong>.</p>
+                           <p>You're ready to go! Click the <strong>'Start Test'</strong> button at the bottom to simulate traffic hitting that URL.</p>
                         </AccordionItem>
 
                         <AccordionItem {...props} title="Understanding the Dashboard" tourId="dashboard">
@@ -161,19 +158,44 @@ const HelpGuidePanel: React.FC<HelpGuidePanelProps> = (props) => {
                            <p>The <strong>Request Log</strong> contains the raw data for every request. From here, you can also export the full results as a PDF, JSON, or CSV file.</p>
                         </AccordionItem>
                         
-                        <AccordionItem {...props} title="Using Your Test History">
-                            <p>The History Panel lets you revisit, rerun, and compare past tests.</p>
+                        <AccordionItem {...props} title="Troubleshooting & Common Issues">
+                            <p><strong>CORS Errors ("Failed to Fetch" or "Network Error"):</strong></p>
+                            <p>If your browser blocks requests to your API due to security policies (CORS), you will see high error rates. To fix this:</p>
+                            <ol>
+                                <li>Go to the "Advanced Options" section in the configuration panel.</li>
+                                <li>Check the box for <strong>"Use CORS Proxy"</strong>.</li>
+                                <li>This routes traffic through a backend function, bypassing browser restrictions. Note: This adds some latency overhead.</li>
+                            </ol>
+
+                            <p><strong>Auto-Fix Button Not Working:</strong></p>
+                            <p>The "Auto-Fix" button uses AI to correct your request body based on error messages returned by the server. If it fails:</p>
                             <ul>
-                                <li><strong>Viewing Past Results:</strong> Click the "History" button in the header to open the panel. Click the "View" button on any past test to load its full dashboard, including all charts and reports.</li>
-                                <li><strong>Rerunning a Test:</strong> Need to run the exact same test again? Just click the "Rerun" button. This will load the test's configuration back into the left panel, ready for you to start.</li>
-                                <li><strong>Comparing Two Tests:</strong> This is a powerful feature to see if your changes made things better or worse.
-                                    <ol>
-                                        <li>In the History panel, check the box next to two different test runs.</li>
-                                        <li>Click the "Compare" button at the bottom of the panel.</li>
-                                        <li>A new window will appear showing you a side-by-side comparison of all the key metrics.</li>
-                                    </ol>
-                                </li>
+                                <li>Ensure your API returns descriptive error messages (e.g., "Field 'email' is required"). If the server returns a generic "500 Internal Server Error", the AI cannot guess the fix.</li>
+                                <li>Check if the API specification is loaded correctly. The AI relies on the spec to know the correct schema.</li>
                             </ul>
+                        </AccordionItem>
+
+                        <AccordionItem {...props} title="Advanced Features">
+                            <p><strong>Trend Analysis:</strong></p>
+                            <p>Compare multiple test runs to spot performance degradation over time.</p>
+                            <ol>
+                                <li>Open the <strong>History Panel</strong>.</li>
+                                <li>Select two or more checkboxes next to past test runs.</li>
+                                <li>Click the <strong>"Analyze Trends"</strong> button at the bottom.</li>
+                                <li>An AI report will be generated, identifying performance regressions and their potential causes.</li>
+                            </ol>
+
+                            <p><strong>Data Persistence (Database Setup):</strong></p>
+                            <p>To ensure your test history, saved URLs, and payloads are not lost, you must set up the database.</p>
+                            <ol>
+                                <li>Click <strong>"Setup Database & Cache"</strong> in the "Application Management" section.</li>
+                                <li>Copy the provided SQL script.</li>
+                                <li>Run it in your Supabase project's SQL Editor.</li>
+                                <li>Click <strong>"Reload Application & Schema"</strong> to apply the changes.</li>
+                            </ol>
+                            
+                            <p><strong>API Spec Management:</strong></p>
+                            <p>Click <strong>"Manage API Specs"</strong> to upload multiple versions of your OpenAPI/Swagger files. This allows you to switch contexts easily between different environments (e.g., Dev vs. Prod) or API versions.</p>
                         </AccordionItem>
                     </div>
                 </div>
