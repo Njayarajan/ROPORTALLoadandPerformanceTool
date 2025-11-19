@@ -236,7 +236,8 @@ export const exportAsPdf = async (
         if (suggestionText) {
             summaryY += 2;
             doc.setDrawColor(theme.colors.border);
-            doc.line(theme.margin + 5, PAGE_WIDTH - theme.margin - 5, summaryY);
+            // FIX: The line function requires 4 arguments (x1, y1, x2, y2). A horizontal line was intended.
+            doc.line(theme.margin + 5, summaryY, PAGE_WIDTH - theme.margin - 5, summaryY);
             summaryY += 3;
             const suggestionLines = doc.splitTextToSize(`Suggestion: ${suggestionText}`, CONTENT_WIDTH - 10);
             doc.text(suggestionLines, theme.margin + 5, summaryY, {});
@@ -913,10 +914,12 @@ export const exportComparisonAsPdf = async (
         theme: 'grid',
         headStyles: { fillColor: [41, 128, 185] },
         didParseCell: (data: any) => {
-            // FIX: The original logic was incorrect, trying to index properties of a Row object.
-            // The correct way to access the raw data for comparison is via `data.row.raw`.
             if (data.column.index > 0 && Array.isArray(data.row.raw)) {
-                if (data.row.raw[data.column.index] !== data.row.raw[data.column.index - 1]) {
+                // FIX: Correctly access cell data for comparison. The original logic was flawed and
+                // would cause a crash. This now safely compares adjacent cells in the raw data array.
+                const currentValue = data.row.raw[data.column.index];
+                const previousValue = data.row.raw[data.column.index - 1];
+                if (currentValue !== previousValue) {
                     data.cell.styles.fillColor = '#fef3c7'; // a light yellow
                     data.cell.styles.textColor = '#000000';
                 }

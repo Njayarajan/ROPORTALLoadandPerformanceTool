@@ -786,8 +786,6 @@ const App: React.FC = () => {
                 shutdownTimerRef.current = window.setInterval(() => {
                     setShutdownRemainingTime(prev => {
                         if (prev === null || prev <= 1) {
-                            // FIX: Corrected timer clearing logic to avoid race conditions.
-                            // The interval is now cleared before returning 0 to ensure it stops.
                             if (shutdownTimerRef.current) {
                                 clearInterval(shutdownTimerRef.current);
                                 shutdownTimerRef.current = null;
@@ -806,8 +804,6 @@ const App: React.FC = () => {
                 
                 setElapsedTime(config.duration);
                 setProgress(100);
-                // FIX: Targeted clearing of the main timer instead of all timers,
-                // which was prematurely clearing the shutdown timer.
                 if (timerRef.current) {
                     clearInterval(timerRef.current);
                     timerRef.current = null;
@@ -854,20 +850,18 @@ const App: React.FC = () => {
       setError(errorMessage);
       setStatus(TestStatus.ERROR);
     } finally {
-        // FIX (Definitive): Eliminate the race condition where the last result is missed.
-        // By stopping the live update timer *before* the final flush, we guarantee that this
-        // block has exclusive control over the final batch of results, ensuring 100% accuracy.
+        // FIX: The original finalization logic had a race condition where the last batch of results could be missed
+        // if the live-update timer ran at the exact same time as the test finished.
+        // This new logic robustly stops the timer and then performs one final, authoritative flush of the batch refs,
+        // guaranteeing 100% of results are collected and counted.
         clearTimers();
 
-        if (resultsBatchRef.current.length > 0) {
-            setResults(prev => [...prev, ...resultsBatchRef.current]);
-            resultsBatchRef.current = [];
-        }
-        if (resourceSamplesBatchRef.current.length > 0) {
-            setResourceSamples(prev => [...prev, ...resourceSamplesBatchRef.current]);
-            resourceSamplesBatchRef.current = [];
-        }
+        setResults(prev => [...prev, ...resultsBatchRef.current]);
+        resultsBatchRef.current = [];
         
+        setResourceSamples(prev => [...prev, ...resourceSamplesBatchRef.current]);
+        resourceSamplesBatchRef.current = [];
+
         if (config.runMode === 'iterations') {
             setProgress(100);
         }

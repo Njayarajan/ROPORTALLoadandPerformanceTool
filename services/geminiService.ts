@@ -353,141 +353,123 @@ export async function runLoadTest(
         });
     }
     
-    // --- ITERATION MODE (Worker Pool) ---
-    // This mode is architected to prevent the race condition where more requests are sent than specified.
-    if (config.runMode === 'iterations') {
-        // FIX: Under high concurrency, the previous counter could suffer from a race
-        // condition, causing more iterations to be dispatched than configured. This
-        // "atomic" implementation ensures exactly the correct number of tasks are created.
-        const iterationCounter = {
-            i: 0,
-            next: function() {
-                // Post-increment returns the current value, then increments.
-                // This is effectively an atomic "fetch and add" in single-threaded JS.
-                const currentIndex = this.i++;
-                if (currentIndex < config.iterations) {
-                    return currentIndex;
+    try {
+        // --- ITERATION MODE (Worker Pool) ---
+        if (config.runMode === 'iterations') {
+            const iterationCounter = {
+                i: 0,
+                next: function() {
+                    const currentIndex = this.i++;
+                    if (currentIndex < config.iterations) {
+                        return currentIndex;
+                    }
+                    return null;
                 }
-                return null;
-            }
-        };
+            };
 
-        const worker = async () => {
-            while (true) {
-                const taskIndex = iterationCounter.next();
+            const worker = async () => {
+                while (true) {
+                    const taskIndex = iterationCounter.next();
 
-                if (taskIndex === null || softStopSignal.aborted) {
-                    break; // No more tasks or test was stopped by the user.
+                    if (taskIndex === null || softStopSignal.aborted) {
+                        break; 
+                    }
+                    
+                    const taskDataContext = (config.dataDrivenBody && config.dataDrivenBody.length > 0)
+                        ? { data: config.dataDrivenBody, getNextIndex: () => taskIndex }
+                        : undefined;
+
+                    if (config.dataDrivenMode === 'strict' && taskDataContext && taskIndex >= taskDataContext.data.length) {
+                        continue; 
+                    }
+
+                    await virtualUserSingleRequest(config, onResult, hardStopSignal, taskDataContext, taskIndex);
+
+                    if (config.pacing > 0) {
+                        await abortableSleep(config.pacing, softStopSignal);
+                    }
                 }
-                
-                // For data-driven tests, each task corresponds to one record.
-                const taskDataContext = (config.dataDrivenBody && config.dataDrivenBody.length > 0)
-                    ? { data: config.dataDrivenBody, getNextIndex: () => taskIndex }
-                    : undefined;
-
-                // Stop if in strict mode and we're out of data.
-                if (config.dataDrivenMode === 'strict' && taskDataContext && taskIndex >= taskDataContext.data.length) {
-                    continue; // This worker skips, another might get the last valid task.
-                }
-
-                await virtualUserSingleRequest(config, onResult, hardStopSignal, taskDataContext, taskIndex);
-
-                if (config.pacing > 0) {
-                    await abortableSleep(config.pacing, softStopSignal);
-                }
-            }
-        };
-        
-        // Start all workers (concurrent users)
-        const workers = Array.from({ length: config.users }, () => worker());
-        try {
+            };
+            
+            const workers = Array.from({ length: config.users }, () => worker());
             await Promise.all(workers);
-        } catch (err) {
-            // AbortError is an expected signal to stop, not a real error.
-            if (!(err instanceof DOMException && err.name === 'AbortError')) {
-                throw err;
-            }
-        }
-    } 
-    // --- DURATION MODE (Continuous Runners) ---
-    else {
-        const dataContext = (config.dataDrivenBody && config.dataDrivenBody.length > 0)
-            ? { data: config.dataDrivenBody, getNextIndex: (() => { let i = -1; return () => { i++; return i; } })() }
-            : undefined;
+        } 
+        // --- DURATION MODE (Continuous Runners) ---
+        else {
+            const dataContext = (config.dataDrivenBody && config.dataDrivenBody.length > 0)
+                ? { data: config.dataDrivenBody, getNextIndex: (() => { let i = -1; return () => { i++; return i; } })() }
+                : undefined;
 
-        // A shared counter for all runners in duration mode.
-        const requestIndexCounter = {
-            i: -1,
-            next: function() {
-                this.i++;
-                return this.i;
-            }
-        };
-
-        // A runner that continuously sends requests until the test signal aborts.
-        const durationRunner = async () => {
-            while (!softStopSignal.aborted) {
-                const requestIndex = requestIndexCounter.next();
-                const runnerConfig = { ...config };
-                if (config.endpoints && config.endpoints.length > 0) {
-                    const endpoint = config.endpoints[Math.floor(Math.random() * config.endpoints.length)];
-                    runnerConfig.url = endpoint.url;
-                    runnerConfig.method = endpoint.method;
+            const requestIndexCounter = {
+                i: -1,
+                next: function() {
+                    this.i++;
+                    return this.i;
                 }
+            };
 
-                await virtualUserSingleRequest(runnerConfig, onResult, hardStopSignal, dataContext, requestIndex);
-                if (config.pacing > 0) {
-                    await abortableSleep(config.pacing, softStopSignal);
-                }
-            }
-        };
+            const durationRunner = async () => {
+                while (!softStopSignal.aborted) {
+                    const requestIndex = requestIndexCounter.next();
+                    const runnerConfig = { ...config };
+                    if (config.endpoints && config.endpoints.length > 0) {
+                        const endpoint = config.endpoints[Math.floor(Math.random() * config.endpoints.length)];
+                        runnerConfig.url = endpoint.url;
+                        runnerConfig.method = endpoint.method;
+                    }
 
-        const runners: Array<Promise<void>> = [];
-        
-        // Ramp-up and stair-step logic is used to start the runners over time.
-        if (config.loadProfile === 'ramp-up') {
-            const rampUpInterval = config.rampUp > 0 ? (config.rampUp * 1000) / config.users : 0;
-            for (let i = 0; i < config.users; i++) {
-                if (softStopSignal.aborted) break;
-                runners.push(durationRunner());
-                if (rampUpInterval > 0) {
-                  await abortableSleep(rampUpInterval, softStopSignal);
+                    await virtualUserSingleRequest(runnerConfig, onResult, hardStopSignal, dataContext, requestIndex);
+                    if (config.pacing > 0) {
+                        await abortableSleep(config.pacing, softStopSignal);
+                    }
                 }
-            }
-        } else { // stair-step
-            let currentUsers = 0;
-            const stepCount = Math.floor(config.duration / config.stepDuration);
+            };
+
+            const runners: Array<Promise<void>> = [];
             
-            for (let i = 0; i < config.initialUsers; i++) {
-                if (softStopSignal.aborted || currentUsers >= config.users) break;
-                runners.push(durationRunner());
-                currentUsers++;
-            }
-            
-            for (let step = 0; step < stepCount; step++) {
-                if (softStopSignal.aborted) break;
-                await abortableSleep(config.stepDuration * 1000, softStopSignal);
-                if (softStopSignal.aborted) break;
+            if (config.loadProfile === 'ramp-up') {
+                const rampUpInterval = config.rampUp > 0 ? (config.rampUp * 1000) / config.users : 0;
+                for (let i = 0; i < config.users; i++) {
+                    if (softStopSignal.aborted) break;
+                    runners.push(durationRunner());
+                    if (rampUpInterval > 0) {
+                      await abortableSleep(rampUpInterval, softStopSignal);
+                    }
+                }
+            } else { // stair-step
+                let currentUsers = 0;
+                const stepCount = Math.floor(config.duration / config.stepDuration);
                 
-                for (let i = 0; i < config.stepUsers; i++) {
+                for (let i = 0; i < config.initialUsers; i++) {
                     if (softStopSignal.aborted || currentUsers >= config.users) break;
                     runners.push(durationRunner());
                     currentUsers++;
                 }
+                
+                for (let step = 0; step < stepCount; step++) {
+                    if (softStopSignal.aborted) break;
+                    await abortableSleep(config.stepDuration * 1000, softStopSignal);
+                    if (softStopSignal.aborted) break;
+                    
+                    for (let i = 0; i < config.stepUsers; i++) {
+                        if (softStopSignal.aborted || currentUsers >= config.users) break;
+                        runners.push(durationRunner());
+                        currentUsers++;
+                    }
+                }
             }
-        }
-        
-        try {
+            
             await Promise.all(runners);
-        } catch (err) {
-            if (!(err instanceof DOMException && err.name === 'AbortError')) {
-                throw err;
-            }
         }
-    }
-    
-    if (config.networkDiagnosticsEnabled) {
-        performance.clearResourceTimings();
+    } catch (err) {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) {
+            console.error("An unexpected error occurred within the test runner:", err);
+            throw err;
+        }
+    } finally {
+        if (config.networkDiagnosticsEnabled) {
+            performance.clearResourceTimings();
+        }
     }
 }
 
@@ -711,18 +693,18 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
     const sortedRuns = [...runs].sort((a, b) => (Number(a.config?.users) || 0) - (Number(b.config?.users) || 0));
     
     const summaryData = sortedRuns.map(run => {
-        const stats = run.stats;
-        if (!stats) {
-            return `- Test [${run.title || 'Untitled'}]: Data is corrupted or missing stats.`;
-        }
-        
         // FIX: Defensively access properties on the stats object, coercing them to numbers.
         // This prevents crashes from .toFixed() if a property is missing, null, or a non-numeric string.
+        const stats: Partial<TestStats> = run.stats || {};
         const totalRequests = Number(stats.totalRequests) || 0;
         const errorCount = Number(stats.errorCount) || 0;
         const avgResponseTime = Number(stats.avgResponseTime) || 0;
         const maxResponseTime = Number(stats.maxResponseTime) || 0;
         const throughput = Number(stats.throughput) || 0;
+
+        if (totalRequests === 0 && avgResponseTime === 0) {
+            return `- Test [${run.title || 'Untitled'}]: Data is corrupted or missing stats.`;
+        }
 
         const errorRate = totalRequests > 0 ? (errorCount / totalRequests) * 100 : 0;
         
