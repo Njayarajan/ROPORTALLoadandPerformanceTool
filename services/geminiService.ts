@@ -954,6 +954,36 @@ export async function generateConfigFromPrompt(prompt: string, apiSpec: any): Pr
   }
 }
 
+/**
+ * Helper to extract clean JSON from an AI response that might include Markdown.
+ */
+function cleanJsonOutput(text: string): string {
+    let cleanJson = text.trim();
+    
+    // Case 1: Markdown code blocks
+    const markdownMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (markdownMatch) {
+        cleanJson = markdownMatch[1].trim();
+    } else {
+        // Case 2: Raw JSON with potential preamble/postscript
+        const firstOpen = text.indexOf('{');
+        const lastClose = text.lastIndexOf('}');
+        const firstArrayOpen = text.indexOf('[');
+        const lastArrayClose = text.lastIndexOf(']');
+
+        if (firstOpen !== -1 && lastClose !== -1) {
+            // Check if array is the outer container
+            if (firstArrayOpen !== -1 && lastArrayClose !== -1 && firstArrayOpen < firstOpen && lastArrayClose > lastClose) {
+                cleanJson = text.substring(firstArrayOpen, lastArrayClose + 1);
+            } else {
+                cleanJson = text.substring(firstOpen, lastClose + 1);
+            }
+        } else if (firstArrayOpen !== -1 && lastArrayClose !== -1) {
+            cleanJson = text.substring(firstArrayOpen, lastArrayClose + 1);
+        }
+    }
+    return cleanJson;
+}
 
 export async function generateSampleBody(
   apiSpec: any,
@@ -970,82 +1000,97 @@ export async function generateSampleBody(
     const learnedPayloads = await getLearnedPayloads(path, method);
     const now = new Date().toISOString();
 
-    let systemInstruction = `You are an API testing assistant. Your task is to generate a valid JSON request body based on an OpenAPI specification and user instructions. The JSON should be realistic and ready to use for an API call. Only output the raw JSON, with no explanations or markdown.`;
+    // Default instruction for fresh generation
+    let systemInstruction = `You are an API testing assistant. Your task is to generate a valid JSON request body based on an OpenAPI specification. The JSON should be realistic, use correct data types, and be ready to use. Only output the raw JSON.`;
 
     let prompt = `
       Generate a JSON request body for the endpoint: ${method.toUpperCase()} ${path}
       
-      **CRITICAL INSTRUCTION:** The top-level \`submitDateTime\` field MUST be set to the exact current timestamp: \`${now}\`. You must use this exact value.
+      **CRITICAL REQUIREMENT:** The field \`submitDateTime\` MUST be exactly: \`${now}\`.
 
       ${learnedPayloads.length > 0 ? `
-      Here are some examples of previously successful JSON bodies for this endpoint. Use them as a strong reference for the correct structure and data types:
+      **Reference (Successful Payloads):**
       ${learnedPayloads.map(p => `\`\`\`json\n${JSON.stringify(p, null, 2)}\n\`\`\``).join('\n\n')}
       ` : ''}
 
-      API Specification context (components/schemas section):
+      **API Schema:**
       ${JSON.stringify(apiSpec.components.schemas, null, 2)}
       
-      The target schema for the request body is for the path '${path}'.
+      Target Schema: Definition for '${path}'.
     `;
 
-    if (formFocus !== 'all') {
-      prompt += `\n\nThe user wants to test a specific part of a larger form. Focus on generating a complete and valid payload, but only populate the '${formFocus}' section with data. All other sections should be present but contain null, empty, or default values as appropriate according to their schema types.`;
-    } else {
-      // Add extremely strict instructions for the 'all' case to ensure full validation.
-      prompt += `
-      \n\n**CRITICAL INSTRUCTION:** You are generating a payload for 'All Forms'. This requires absolute completeness.
-      - **EVERY SINGLE FIELD** defined in the schema for the request body must be present and populated with a realistic, valid, non-null value.
-      - **DO NOT** use 'required' fields as a guide; treat ALL fields as mandatory.
-      - **NEVER** generate \`null\` values.
-      - **NEVER** generate empty arrays (\`[]\`). If a field is an array (e.g., 'addresses', 'vehicles'), you MUST generate at least one valid, fully populated object for it.
-      - **NEVER** generate empty objects (\`{}\`). All objects must be fully populated according to their schema.
-      `;
-    }
+    // Logic for Fresh Generation
+    if (!existingBody) {
+        if (formFocus !== 'all') {
+            prompt += `\n\nFocus on the '${formFocus}' section. Populate it fully. Other sections should be present but can use minimal/default values.`;
+        } else {
+            prompt += `\n\n**STRICT COMPLETENESS:** Generate a FULL payload. Populate EVERY field defined in the schema with realistic, valid data. Do not use 'null' or empty arrays unless absolutely necessary.`;
+        }
+        if (customInstructions) {
+            prompt += `\n\n**User Instructions:**\n${customInstructions}`;
+        }
+    } 
     
-    if (customInstructions) {
-      prompt += `\n\nAdhere to the following custom instructions:
-      ${customInstructions}`;
-    }
-
-    if (existingBody) {
+    // Logic for Auto-Fix / Error Recovery
+    else {
+        // If we have a history of errors, this is a "Fix" operation.
         if (errorHistory && errorHistory.length > 0) {
             const attemptNumber = errorHistory.length + 1;
-            systemInstruction = `You are a hyper-intelligent AI with unparalleled debugging capabilities, acting as a senior principal engineer. Your mission is to fix a failing API request body with surgical precision. You will be provided with the complete OpenAPI specification (the ultimate source of truth), a history of failed API calls with their error responses, and the last JSON payload that failed.
-
-**Core Directives:**
-
-1.  **Deep Analysis:** Do not just look at the last error. Analyze the **entire sequence of errors** to identify patterns or recurring validation issues. Understand the evolution of the problem. Is the AI getting stuck in a loop? Is there a fundamental misunderstanding of the schema?
-2.  **Schema Supremacy:** The OpenAPI specification is non-negotiable. The final payload **MUST** conform to it perfectly, including data types (string vs. number), formats (e.g., date-time), and object structures. Pay extremely close attention to nested objects and arrays.
-3.  **Holistic Debugging:** While the most recent error is your primary focus, consider if it's a symptom of a deeper structural problem. If correcting a single field has failed repeatedly, re-evaluate the entire object or section containing that field. It may be necessary to restructure a part of the JSON, not just change a value.
-4.  **Minimalism with a Caveat:** Your default strategy is to make the smallest possible change to fix the error. However, if this strategy proves ineffective (as evidenced by the error history), you are empowered to make larger, more structural changes to the payload to achieve a valid state. Your goal is success, not just minimal change.
-5.  **Ignore External Factors:** The error messages might mention issues outside the JSON body (e.g., missing HTTP headers like 'Ocp-Apim-Subscription-Key', 'Authorization', or invalid query parameters). You MUST recognize these and understand that your **sole responsibility** is to fix the JSON body. **DO NOT** add headers or other non-body parameters into the JSON payload.
-6.  **Zero Tolerance for Errors:** Do not generate \`null\` for required fields, empty arrays \`[]\` where objects are expected, or empty objects \`{}\`. Ensure every part of the payload is meaningful and valid according to the schema.
-
-**Output:**
-Your final output must be **only the corrected, raw JSON payload**. Do not include any explanations, markdown, or conversational text. This is attempt number ${attemptNumber}.`;
             
-            const errorContextString = errorHistory.map((err, index) => 
-                `--- Error from Attempt #${index + 1} ---\nStatus: ${err.status}\nResponse:\n${err.body}`
+            // 1. Specialized Persona for Debugging
+            systemInstruction = `You are a Senior API Integration Engineer and Payload Debugger. Your ONLY goal is to fix a failing JSON payload so it satisfies the server's validation rules.
+            
+            **Your Process:**
+            1.  **Analyze the Error:** Read the server's error response carefully. It contains the exact reason for rejection (e.g., "field X is required", "invalid format", "unknown property").
+            2.  **Inspect the Schema:** Compare the failing payload against the OpenAPI definition. Look for type mismatches (string vs int), missing required fields, or incorrect enums.
+            3.  **Apply the Fix:** Modify the JSON to resolve the specific error reported. Do not make unnecessary changes to unrelated fields.
+            4.  **HTML Error Handling:** If the error body is HTML (e.g., a 404 or 500 page), extract the title or error code text to understand the context. A 500 often means a field format is wrong. A 404 might mean the ID in the payload doesn't match the URL.
+            
+            **Output Rules:**
+            - Output ONLY the corrected valid JSON.
+            - NO explanations.
+            - NO markdown formatting if possible, just raw JSON.
+            `;
+            
+            const previousErrors = errorHistory.map((err, i) => 
+                `[Attempt ${i + 1}] Status: ${err.status}\nServer Response: ${err.body.substring(0, 500)}` // Truncate long errors
             ).join('\n\n');
 
-            prompt += `\n\nThe previous attempts using the JSON body below failed. Analyze the full error history and correct the JSON to resolve the issues.
-            \n**Full Error History:**\n${errorContextString}
-            \n\n**Last Failing JSON Body (to be fixed):**
-            \n${existingBody}`;
-        } else {
-            systemInstruction += `\n\nYou will be given an existing JSON body. You must modify it according to the new custom instructions, preserving the overall structure.`;
-            prompt += `\n\nHere is the existing JSON body to modify:
-            \n${existingBody}`;
+            prompt = `
+            **TASK: FIX THIS PAYLOAD**
+            
+            The API rejected the JSON payload below. Fix it based on the error history and the schema.
+
+            **API Schema (Source of Truth):**
+            ${JSON.stringify(apiSpec.components.schemas, null, 2)}
+
+            **Validation History (Most Recent Error is Critical):**
+            ${previousErrors}
+
+            **The Failing Payload:**
+            ${existingBody}
+            
+            **Instructions:**
+            - If the error says "Unknown field", REMOVE that field.
+            - If the error says "Required", ADD that field.
+            - If the error is "500 Internal Server Error", check data types strictly against the schema (e.g. UUIDs, DateTimes).
+            - Ensure 'submitDateTime' is set to \`${now}\`.
+            
+            Return ONLY the fixed JSON.
+            `;
+        } 
+        // Logic for Custom Instruction modification (User asked to change something on existing body)
+        else {
+            systemInstruction += `\n\nYou will be modifying an existing JSON body based on user instructions. Maintain the validity of the JSON structure.`;
+            prompt += `\n\n**Existing JSON:**\n${existingBody}\n\n**Modification Instructions:**\n${customInstructions}`;
         }
     }
 
     const modelConfig: any = { systemInstruction };
     
-    // When performing an auto-fix (indicated by a non-empty errorHistory),
-    // allocate the maximum thinking budget to the AI. This gives it more
-    // resources to reason about complex validation errors and produce a better fix.
+    // Use higher thinking budget for Auto-Fix to allow analysis of the error log
     if (errorHistory && errorHistory.length > 0) {
-        modelConfig.thinkingConfig = { thinkingBudget: 24576 }; // Max for gemini-2.5-flash
+        modelConfig.thinkingConfig = { thinkingBudget: 1024 }; 
     }
 
     const response = await client.models.generateContent({
@@ -1055,10 +1100,11 @@ Your final output must be **only the corrected, raw JSON payload**. Do not inclu
     });
 
     const text = response.text.trim();
-    const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
-    potentialJson = jsonMatch ? jsonMatch[1] : text;
+    potentialJson = cleanJsonOutput(text);
 
+    // Final validation check
     JSON.parse(potentialJson);
+    
     return potentialJson;
   } catch (e: any) {
     console.error("Error during generateSampleBody:", e);
@@ -1069,10 +1115,10 @@ Your final output must be **only the corrected, raw JSON payload**. Do not inclu
     }
     if (e instanceof SyntaxError) {
       console.error("Raw Gemini response:", potentialJson);
-      throw new Error("The AI failed to generate a valid JSON body. Please try again or check your custom instructions.");
+      throw new Error("The AI failed to generate valid JSON. Please try again.");
     }
     
-    throw new Error(`An unexpected error occurred while generating the sample body: ${e.message || e.toString()}`);
+    throw new Error(`AI Generation Error: ${e.message || e.toString()}`);
   }
 }
 

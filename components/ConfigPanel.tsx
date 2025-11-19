@@ -1461,6 +1461,16 @@ Expected JSON response format:
                             <div>
                                 <label htmlFor="cors-proxy" className="font-medium text-gray-300">Use CORS Proxy</label>
                                 <p className="text-xs text-gray-400">Enable this if you are getting CORS errors. This will route requests through a server-side function to bypass browser security limitations.</p>
+                                {useCorsProxy && (
+                                    <div className="mt-2 p-2 bg-yellow-900/30 border border-yellow-500/30 rounded text-xs text-yellow-200 flex items-start">
+                                        <ExclamationTriangleIcon className="w-4 h-4 mr-2 flex-shrink-0 mt-0.5" />
+                                        <span>
+                                            <strong>Warning: Latency Impact</strong><br/>
+                                            Using the proxy adds significant network overhead (~400-800ms) if your Supabase region (likely US East) is far from you or your API. 
+                                            For accurate performance testing, disable this or move your Supabase project to a region closer to your target API.
+                                        </span>
+                                    </div>
+                                )}
                             </div>
                         </div>
                          <div className="flex items-start space-x-3">
