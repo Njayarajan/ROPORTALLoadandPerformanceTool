@@ -7,17 +7,53 @@ import type { TestRun, TestRunSummary, UnsavedTestRun } from '../types';
  * @returns The newly created TestRun record from the database.
  */
 export const saveTestRun = async (payload: UnsavedTestRun): Promise<TestRun> => {
-    const { data, error } = await (supabase
-        .from('test_runs') as any)
-        .insert([payload])
-        .select()
-        .single();
+    try {
+        const { data, error } = await (supabase
+            .from('test_runs') as any)
+            .insert([payload])
+            .select()
+            .single();
 
-    if (error) {
+        if (error) throw error;
+        return data;
+    } catch (error: any) {
+        // Detect Payload Too Large (413) or Timeout errors which suggest data size issues
+        const isSizeError = error.message?.includes('413') || 
+                            error.status === 413 || 
+                            error.message?.includes('Payload Too Large') || 
+                            error.message?.includes('timeout') ||
+                            error.message?.includes('request entity too large');
+
+        if (isSizeError) {
+            console.warn('Test run payload too large. Retrying without detailed result logs to ensure history is saved.');
+            
+            // Create a fallback payload: preserve stats/config/report, but drop the heavy 'results' array
+            const fallbackPayload = {
+                ...payload,
+                results: [], 
+                // Add a note to the report executive summary if it exists, or creates one
+                report: payload.report ? {
+                    ...payload.report,
+                    logSummary: (payload.report.logSummary || '') + " [NOTE: Detailed request logs were truncated due to database size limits.]"
+                } : null
+            };
+
+            const { data, error: retryError } = await (supabase
+                .from('test_runs') as any)
+                .insert([fallbackPayload])
+                .select()
+                .single();
+
+            if (retryError) {
+                console.error('Error saving fallback test run:', retryError.message);
+                throw retryError;
+            }
+            return data;
+        }
+        
         console.error('Error saving test run:', error.message);
         throw error;
     }
-    return data;
 };
 
 /**
@@ -113,12 +149,13 @@ export const getTestRunDetails = async (id: string): Promise<TestRun> => {
             data = retryResult.data;
             error = retryResult.error;
         }
-        
-        // Manually add null properties to satisfy the TestRun type if they were excluded.
-        if (data) {
-            if (!('api_spec_id' in data)) data.api_spec_id = null;
-            if (!('resource_samples' in data)) data.resource_samples = undefined;
-        }
+    }
+
+    // Manually add null/empty properties to satisfy the TestRun type if they were excluded or missing.
+    if (data) {
+        if (!('api_spec_id' in data)) data.api_spec_id = null;
+        if (!('resource_samples' in data)) data.resource_samples = undefined;
+        if (!('results' in data) || data.results === null) data.results = [];
     }
 
     if (error) {

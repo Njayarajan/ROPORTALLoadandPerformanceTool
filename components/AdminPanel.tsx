@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import type { UsageLimits } from '../types';
 import { SpinnerIcon, ShieldCheckIcon, UserGroupIcon, ClipboardDocumentListIcon } from './icons';
-import { getAllUsageLimits, setTestModeStatus, updateUsageLimits } from '../services/configService';
+import { getAllUsageLimits, setTestModeStatus, updateUsageLimits, getAdminStats } from '../services/configService';
 import { useAuth } from '../auth/AuthContext';
 import UserManagementTab from './UserManagement';
 
@@ -34,10 +35,22 @@ const DashboardTab: React.FC = () => {
     const [localTestMode, setLocalTestMode] = useState(isTestMode);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [stats, setStats] = useState<{ total_users: number; total_test_runs: number } | null>(null);
+    const [loadingStats, setLoadingStats] = useState(true);
 
     useEffect(() => {
         setLocalTestMode(isTestMode);
     }, [isTestMode]);
+
+    useEffect(() => {
+        const loadStats = async () => {
+            setLoadingStats(true);
+            const data = await getAdminStats();
+            setStats(data);
+            setLoadingStats(false);
+        };
+        loadStats();
+    }, []);
 
     const handleTestModeToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const newStatus = e.target.checked;
@@ -63,8 +76,18 @@ const DashboardTab: React.FC = () => {
             <h3 className="text-xl font-semibold text-white">Dashboard</h3>
              {error && <div className="p-3 bg-red-900/30 border border-red-500/50 text-red-300 text-sm rounded-md">{error}</div>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <StatCard icon={<UserGroupIcon className="w-6 h-6"/>} title="Total Users" value="N/A" description="User counting requires a backend function." />
-                <StatCard icon={<ClipboardDocumentListIcon className="w-6 h-6"/>} title="Total Test Runs" value="N/A" description="Test run counting requires a backend function." />
+                <StatCard 
+                    icon={<UserGroupIcon className="w-6 h-6"/>} 
+                    title="Total Users" 
+                    value={loadingStats ? "..." : (stats?.total_users.toLocaleString() ?? "N/A")} 
+                    description={stats ? "Registered accounts on the platform." : "Requires updated DB script."} 
+                />
+                <StatCard 
+                    icon={<ClipboardDocumentListIcon className="w-6 h-6"/>} 
+                    title="Total Test Runs" 
+                    value={loadingStats ? "..." : (stats?.total_test_runs.toLocaleString() ?? "N/A")} 
+                    description={stats ? "Performance tests completed globally." : "Requires updated DB script."} 
+                />
             </div>
              <div>
                 <h4 className="text-md font-semibold text-white mb-2">Application Test Mode</h4>

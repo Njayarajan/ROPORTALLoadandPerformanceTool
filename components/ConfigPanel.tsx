@@ -1250,7 +1250,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = (props) => {
                     isDisabled={!isStep1Complete || !isStep2Complete}
                     activeHelpTour={activeHelpTour}
                     currentHelpStep={currentHelpStep}
-                    helpStepId={operationMode === 'performance' ? 4 : (operationMode === 'website' ? 4 : undefined)}
+                    helpStepId={operationMode === 'performance' ? 4 : undefined}
                 >
                     {loadProfileContent}
                 </AccordionStep>

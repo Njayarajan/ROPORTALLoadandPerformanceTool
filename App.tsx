@@ -670,14 +670,33 @@ const App: React.FC = () => {
           const isMockUser = currentUser?.id === 'test-user-id';
           if (status === TestStatus.COMPLETED && stats && currentConfig && currentUser && !isMockUser && !viewingHistoryId && !hasSavedCurrentRun) {
               setHasSavedCurrentRun(true); // Prevent this from running again for the same test
-              const resultsToSave = results.map(r => {
-                  if (r.success && r.responseBody) {
-                      const { responseBody, ...rest } = r;
-                      return rest;
-                  }
-                  return r;
-              });
               
+              // --- SMART COMPRESSION LOGIC ---
+              // Prevents massive payloads from causing 413 errors or timeouts
+              const compressResults = (rawResults: TestResultSample[]) => {
+                  let processed = rawResults.map(r => {
+                      // 1. Always strip bodies from successful requests - they are heavy and rarely needed for history
+                      if (r.success) {
+                          const { responseBody, requestBody, ...rest } = r;
+                          return rest;
+                      }
+                      // 2. Truncate error bodies if they are excessively large
+                      if (r.responseBody && r.responseBody.length > 5000) {
+                           return { ...r, responseBody: r.responseBody.substring(0, 5000) + '... [TRUNCATED]' };
+                      }
+                      return r;
+                  });
+
+                  // 3. Downsample if result count is extreme (>10k rows)
+                  // Keep all errors for debugging, but sample successful requests to save space
+                  if (processed.length > 10000) {
+                      processed = processed.filter((r, i) => !r.success || i % 10 === 0); 
+                  }
+                  return processed;
+              };
+
+              const resultsToSave = compressResults(results);
+
               const runToSave: UnsavedTestRun = {
                   user_id: currentUser.id,
                   title,

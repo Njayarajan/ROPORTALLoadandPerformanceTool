@@ -5,12 +5,13 @@ import type { DatabaseScript } from '../types';
 // to create or update all necessary tables, functions, and policies.
 export const databaseScripts: DatabaseScript[] = [
   {
-    version: 'Full Schema',
+    version: 'v2.1 Full Schema (Large Load Optimized)',
     title: 'Single Idempotent Setup Script',
-    date: '2024-08-05',
+    date: '2024-08-07',
     sql: `
 -- =================================================================
 -- RO-PORTAL API & Load Performance Test - Full Idempotent Schema
+-- Version: 2.1 (Optimized for Large Load History & Admin Stats)
 -- =================================================================
 -- This single script creates and configures all necessary tables,
 -- functions, and policies for the application. It is designed to be
@@ -255,6 +256,37 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
+-- Function for the Admin Dashboard to get system-wide stats
+-- Security: SECURITY DEFINER allows this to read counts bypassing RLS,
+-- but we strictly check the user's role inside the function.
+CREATE OR REPLACE FUNCTION public.get_admin_stats()
+RETURNS jsonb AS $$
+DECLARE
+    user_count integer;
+    run_count integer;
+    is_admin boolean;
+BEGIN
+    -- Check if the calling user is an admin
+    SELECT (role = 'admin') INTO is_admin
+    FROM public.profiles
+    WHERE id = auth.uid();
+
+    -- If not admin or no profile, return nulls or error
+    IF is_admin IS NOT TRUE THEN
+        RAISE EXCEPTION 'Access denied: User is not an admin';
+    END IF;
+
+    -- Count profiles (proxy for users) and test runs
+    SELECT count(*) INTO user_count FROM public.profiles;
+    SELECT count(*) INTO run_count FROM public.test_runs;
+
+    RETURN jsonb_build_object(
+        'total_users', user_count,
+        'total_test_runs', run_count
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 
 -- -----------------------------------------------------------------
 -- 6. INDEXES
@@ -264,6 +296,13 @@ $$ LANGUAGE plpgsql STABLE;
 
 CREATE INDEX IF NOT EXISTS test_runs_user_id_idx ON public.test_runs(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS successful_payloads_unique_idx ON public.successful_payloads(endpoint_path, http_method, payload_hash);
+
+-- Optimized index for history retrieval (combines user_id and date)
+CREATE INDEX IF NOT EXISTS test_runs_user_created_idx ON public.test_runs(user_id, created_at DESC);
+
+-- Optimized index for the Learning Service (retrieves recent successful payloads)
+CREATE INDEX IF NOT EXISTS successful_payloads_retrieval_idx ON public.successful_payloads(endpoint_path, http_method, created_at DESC);
+
 CREATE INDEX IF NOT EXISTS base_payloads_user_id_idx ON public.base_payloads(user_id);
 CREATE INDEX IF NOT EXISTS header_sets_user_id_idx ON public.header_sets(user_id);
     `.trim(),

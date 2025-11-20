@@ -159,6 +159,9 @@ const HelpGuidePanel: React.FC<HelpGuidePanelProps> = (props) => {
                         </AccordionItem>
                         
                         <AccordionItem {...props} title="Troubleshooting & Common Issues">
+                            <p><strong>Test History Not Saving (Large Payloads):</strong></p>
+                            <p>For very large load tests (thousands of requests), saving the full request/response log can overwhelm the database. The system now automatically optimizes this by stripping large bodies from successful requests and truncating errors. If a save still fails, it will retry saving only the summary statistics to ensure your history is preserved.</p>
+
                             <p><strong>CORS Errors ("Failed to Fetch" or "Network Error"):</strong></p>
                             <p>If your browser blocks requests to your API due to security policies (CORS), you will see high error rates. To fix this:</p>
                             <ol>

@@ -1,5 +1,4 @@
 
-
 import { supabase } from './supabaseClient';
 import type { UsageLimits } from '../types';
 
@@ -207,5 +206,26 @@ export const checkSupabaseConnection = async (): Promise<{ success: boolean; err
             return { success: false, error: 'Permission denied. Check Row Level Security (RLS) policies for the \'app_config\' table.' };
         }
         return { success: false, error: errorMessage };
+    }
+};
+
+
+/**
+ * Fetches real-time system statistics for the admin dashboard using a secure RPC function.
+ * @returns A promise that resolves to an object with totals, or null if the function is missing.
+ */
+export const getAdminStats = async (): Promise<{ total_users: number; total_test_runs: number } | null> => {
+    try {
+        const { data, error } = await supabase.rpc('get_admin_stats');
+
+        if (error) {
+            console.warn("Could not fetch admin stats (function might be missing):", error.message);
+            return null;
+        }
+
+        return data as { total_users: number; total_test_runs: number };
+    } catch (e) {
+        console.error("Error calling get_admin_stats:", e);
+        return null;
     }
 };
