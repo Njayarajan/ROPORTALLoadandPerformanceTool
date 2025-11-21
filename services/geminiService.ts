@@ -86,11 +86,29 @@ async function virtualUserSingleRequest(
   onResult: (result: TestResultSample) => void,
   signal: AbortSignal,
   dataContext?: DataDrivenContext,
-  requestIndex?: number
+  requestIndex?: number,
+  virtualUserId?: number
 ) {
   if (signal.aborted) return; // Prevent starting new requests if the test is already stopped.
 
-  const targetUrl = config.url;
+  // Generate IDs early for tracing
+  const requestId = crypto.randomUUID();
+  const vuId = virtualUserId !== undefined ? `vu-${virtualUserId}` : 'vu-unknown';
+
+  // --- CACHE BUSTING LOGIC ---
+  // We intentionally append a unique nonce to the URL. This forces every single request
+  // to be treated as unique by browsers, proxies, load balancers, and CDNs.
+  // This is critical for accurate load testing metrics.
+  let targetUrl = config.url;
+  try {
+      const urlObj = new URL(targetUrl);
+      urlObj.searchParams.set('_nonce', requestId);
+      targetUrl = urlObj.toString();
+  } catch (e) {
+      // If URL parsing fails, use original, but warn.
+      console.warn("Failed to append cache-buster nonce to URL:", targetUrl);
+  }
+
   const targetMethod = config.method;
   let targetBody = config.body;
 
@@ -164,7 +182,16 @@ async function virtualUserSingleRequest(
     const fetchOptions: RequestInit = {
       method: targetMethod,
       signal,
-      headers: {},
+      keepalive: true, // IMPORTANT: Helps ensure request completes even if thread/page state changes
+      cache: 'no-store', // CRITICAL: Disable browser caching to ensure every request hits the server
+      headers: {
+          // Inject tracing headers to correlate frontend requests with backend logs
+          'X-Request-ID': requestId,
+          'X-Virtual-User-ID': vuId,
+          // Aggressive anti-caching headers for older proxies
+          'Pragma': 'no-cache',
+          'Expires': '0',
+      },
     };
 
     // Add custom headers from config first
@@ -212,7 +239,7 @@ async function virtualUserSingleRequest(
                 'apikey': supabaseAnonKey,
             },
             body: JSON.stringify({
-                url: targetUrl,
+                url: targetUrl, // Proxy handles the cache busting URL
                 options: proxyOptions
             }),
             signal,
@@ -221,13 +248,15 @@ async function virtualUserSingleRequest(
       response = await fetch(targetUrl, fetchOptions);
     }
 
+    // Explicitly await the body to ensure the stream is consumed and the connection can be reused or closed properly.
+    // This prevents "hanging" connections that might look successful but aren't fully processed.
+    const responseText = await response.text();
+    responseBody = responseText;
+
     statusCode = response.status;
     statusText = response.statusText;
     success = response.ok;
     
-    const responseText = await response.text();
-    responseBody = responseText;
-
     if (!success) {
       errorDetails = `Server responded with a non-successful status code.`;
     }
@@ -320,7 +349,7 @@ async function virtualUserSingleRequest(
   const finalSuccess = success && allAssertionsPassed;
 
   onResult({
-    id: crypto.randomUUID(),
+    id: requestId, // Correlate this ID with X-Request-ID in backend logs
     timestamp: Date.now(),
     latency: latency,
     success: finalSuccess,
@@ -386,7 +415,7 @@ export async function runLoadTest(
                 }
             };
 
-            const worker = async () => {
+            const worker = async (workerId: number) => {
                 while (true) {
                     const taskIndex = iterationCounter.next();
 
@@ -402,7 +431,7 @@ export async function runLoadTest(
                         continue; 
                     }
 
-                    await virtualUserSingleRequest(config, onResult, hardStopSignal, taskDataContext, taskIndex);
+                    await virtualUserSingleRequest(config, onResult, hardStopSignal, taskDataContext, taskIndex, workerId);
 
                     if (config.pacing > 0) {
                         await abortableSleep(config.pacing, softStopSignal);
@@ -410,7 +439,7 @@ export async function runLoadTest(
                 }
             };
             
-            const workers = Array.from({ length: config.users }, () => worker());
+            const workers = Array.from({ length: config.users }, (_, i) => worker(i));
             await Promise.all(workers);
         } 
         // --- DURATION MODE (Continuous Runners) ---
@@ -427,7 +456,7 @@ export async function runLoadTest(
                 }
             };
 
-            const durationRunner = async () => {
+            const durationRunner = async (workerId: number) => {
                 while (!softStopSignal.aborted) {
                     const requestIndex = requestIndexCounter.next();
                     const runnerConfig = { ...config };
@@ -437,7 +466,7 @@ export async function runLoadTest(
                         runnerConfig.method = endpoint.method;
                     }
 
-                    await virtualUserSingleRequest(runnerConfig, onResult, hardStopSignal, dataContext, requestIndex);
+                    await virtualUserSingleRequest(runnerConfig, onResult, hardStopSignal, dataContext, requestIndex, workerId);
                     if (config.pacing > 0) {
                         await abortableSleep(config.pacing, softStopSignal);
                     }
@@ -450,7 +479,7 @@ export async function runLoadTest(
                 const rampUpInterval = config.rampUp > 0 ? (config.rampUp * 1000) / config.users : 0;
                 for (let i = 0; i < config.users; i++) {
                     if (softStopSignal.aborted) break;
-                    runners.push(durationRunner());
+                    runners.push(durationRunner(i));
                     if (rampUpInterval > 0) {
                       await abortableSleep(rampUpInterval, softStopSignal);
                     }
@@ -461,7 +490,7 @@ export async function runLoadTest(
                 
                 for (let i = 0; i < config.initialUsers; i++) {
                     if (softStopSignal.aborted || currentUsers >= config.users) break;
-                    runners.push(durationRunner());
+                    runners.push(durationRunner(currentUsers));
                     currentUsers++;
                 }
                 
@@ -472,7 +501,7 @@ export async function runLoadTest(
                     
                     for (let i = 0; i < config.stepUsers; i++) {
                         if (softStopSignal.aborted || currentUsers >= config.users) break;
-                        runners.push(durationRunner());
+                        runners.push(durationRunner(currentUsers));
                         currentUsers++;
                     }
                 }
@@ -1216,47 +1245,28 @@ export async function generateAndValidateBody(
 
             const targetUrl = (baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl) + path;
             onLog(`Sending test request to ${targetUrl}...`);
-
-            const headers: HeadersInit = { 'Content-Type': 'application/json' };
+            
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+            };
+            if (authToken) {
+                headers['Authorization'] = /^bearer /i.test(authToken) ? authToken : `Bearer ${authToken}`;
+            }
             
             if (headersConfig) {
-                for (const header of headersConfig) {
-                    if (header.enabled && header.key) {
-                        (headers as Record<string, string>)[header.key] = header.value;
+                for (const h of headersConfig) {
+                    if (h.enabled && h.key) {
+                        headers[h.key] = h.value;
                     }
                 }
             }
-            
-            if (authToken) {
-                let authHeaderValue = authToken;
-                if (!/^bearer /i.test(authHeaderValue)) {
-                    authHeaderValue = `Bearer ${authHeaderValue}`;
-                }
-                (headers as Record<string, string>)['Authorization'] = authHeaderValue;
-            }
-            
-            const fetchOptions: RequestInit = {
-                method: method.toUpperCase(),
-                headers,
-                body: currentBody,
-                signal,
-            };
 
             let response;
             if (useCorsProxy) {
-                onLog('Using CORS Proxy for validation request...');
                 const { data: { session } } = await supabase.auth.getSession();
-                if (!session) {
-                    throw new Error("Not logged in. A user session is required to use the CORS proxy function.");
-                }
-
+                if (!session) throw new Error("User session required for proxy.");
+                
                 const functionsUrl = `${supabaseUrl}/functions/v1/cors-proxy`;
-                const proxyOptions: any = {
-                    method: fetchOptions.method,
-                    headers: fetchOptions.headers,
-                    body: fetchOptions.body,
-                };
-
                 response = await fetch(functionsUrl, {
                     method: 'POST',
                     headers: {
@@ -1264,237 +1274,52 @@ export async function generateAndValidateBody(
                         'Content-Type': 'application/json',
                         'apikey': supabaseAnonKey,
                     },
-                    body: JSON.stringify({ url: targetUrl, options: proxyOptions }),
-                    signal,
+                    body: JSON.stringify({
+                        url: targetUrl,
+                        options: {
+                            method: method,
+                            headers: headers,
+                            body: currentBody
+                        }
+                    }),
+                    signal
                 });
             } else {
-                response = await fetch(targetUrl, fetchOptions);
+                response = await fetch(targetUrl, {
+                    method: method,
+                    headers: headers,
+                    body: currentBody,
+                    signal
+                });
             }
 
-
+            const responseText = await response.text();
+            
             if (response.ok) {
-                onLog(`✅ Validation successful with status ${response.status}!`);
-                try {
-                    await saveSuccessfulPayload(path, method, currentBody);
-                    onLog(`✅ Successfully saved payload to learning database.`);
-                } catch (saveError) {
-                    const errorMessage = saveError instanceof Error ? saveError.message : 'Unknown DB error';
-                    onLog(`⚠️ Could not save payload to learning database: ${errorMessage}`);
-                }
+                onLog(`\u2705 Success! API responded with status ${response.status}.`);
+                
+                // Learn from success
+                saveSuccessfulPayload(path, method, currentBody).catch(err => console.warn("Background learning failed:", err));
+
                 return currentBody;
             } else {
-                const rawErrorBody = await response.text();
-                const cleanedErrorBody = stripHtml(rawErrorBody).substring(0, 2000); // Limit length for context window
-                
-                errorHistory.push({ status: response.status, body: cleanedErrorBody });
-                onLog(`❌ Request failed with status ${response.status}. Preparing for next attempt.`);
-                onLog(`Error Response (Excerpt):\n${cleanedErrorBody.substring(0, 500)}...`);
-                
-                if (attempt === maxAttempts) {
-                    throw new Error(`Auto-fix failed after ${maxAttempts} attempts. Last error: ${cleanedErrorBody}`);
-                }
+                onLog(`\u274C Failed. API responded with status ${response.status}.`);
+                onLog(`Error Body: ${stripHtml(responseText).substring(0, 300)}...`);
+                errorHistory.push({ status: response.status, body: responseText });
             }
-        } catch (err) {
-             if (err instanceof AutoFixStoppedError) {
-                throw err; // Re-throw to be caught by the caller
-            }
-            if (err instanceof Error && err.name === 'AbortError') {
-                throw new AutoFixStoppedError('Auto-fix process was stopped by the user during validation.', currentBody);
-            }
-            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-            onLog(`An error occurred during attempt ${attempt}: ${errorMessage}`);
-            if (attempt === maxAttempts) {
-                throw new Error(`Auto-fix failed. Error during final attempt: ${errorMessage}`);
-            }
-            errorHistory.push({ status: 0, body: `Client-side error during validation: ${errorMessage}` });
+
+        } catch (error: any) {
+            if (error.name === 'AbortError') throw new AutoFixStoppedError('Auto-fix process was stopped by the user.', currentBody);
+            onLog(`\u26A0\uFE0F Unexpected Error: ${error.message}`);
+            // Don't push client-side errors to history for the AI, just retry generation or fail if critical
         }
     }
 
-    throw new Error('Auto-fix failed to produce a successful payload.');
+    throw new Error(`Failed to generate a valid payload after ${maxAttempts} attempts.`);
 }
-
-
-/**
- * Generates a specific type of data field in a structured array format.
- * This is a highly specialized and efficient function for generating test data.
- */
-async function generateFieldArray(
-    fieldType: string, 
-    count: number, 
-    customInstructions: string,
-    errorHistory: { status: number; body: string }[] | null,
-    attemptNumber?: number,
-    fieldSchema?: any
-): Promise<any[]> {
-    let jsonText = '';
-    try {
-        const client = getAiClient();
-        let promptIntro = '';
-        let schemaForPrompt: any;
-
-        let systemInstruction = `You are a test data generation specialist. Your task is to generate a valid JSON array of objects based on the user's request. Only output the raw JSON, with no explanations or markdown.`;
-
-        if (fieldType === 'pii') {
-            schemaForPrompt = {
-                type: 'object',
-                properties: {
-                    name: { type: 'string', description: "A unique first name." },
-                    surName: { type: 'string', description: "A unique last name." },
-                    email: { type: 'string', description: "A unique, realistic email address for the top-level field."},
-                    phone: { type: 'string', description: "A unique 10-digit Australian mobile number." },
-                }
-            };
-            promptIntro = `Each object must contain a unique name, surname, email, and phone number for a person.`;
-        } else {
-            if (!fieldSchema) {
-                throw new Error(`Schema is required for generating field type: ${fieldType}`);
-            }
-            schemaForPrompt = fieldSchema;
-            promptIntro = `Each object in the array must be a valid '${fieldType}' object.`;
-        }
-        
-        let prompt = `
-        Your task is to generate a raw JSON array containing exactly ${count} objects.
-        ${promptIntro}
-
-        Each object in the array must conform to the following JSON schema:
-        \`\`\`json
-        ${JSON.stringify(schemaForPrompt, null, 2)}
-        \`\`\`
-        
-        CRITICAL RULES:
-        1. All generated values MUST be unique across all ${count} objects, especially for identifying fields.
-        2. The output must be ONLY the raw JSON array, without any markdown or explanatory text.
-        `;
-        
-        if (customInstructions) {
-          prompt += `\n\nUSER INSTRUCTIONS (High Priority):\n${customInstructions}`;
-        }
-
-        if (errorHistory && errorHistory.length > 0) {
-            systemInstruction = `You are a hyper-intelligent AI with unparalleled debugging capabilities, acting as a senior principal engineer. Your mission is to fix a failing test data generation request. You will be given a schema for the data, a history of failed API calls with their error responses, and the user's instructions.
-
-    **Core Directives:**
-
-    1.  **Analyze Errors:** The API rejected the data you previously generated. Analyze the **entire sequence of errors** to understand why. The problem is likely in the format, uniqueness, or realism of the data for the field type: '${fieldType}'.
-    2.  **Schema Supremacy:** The JSON Schema provided is non-negotiable. The final data array **MUST** conform to it perfectly, including data types (string vs. number) and formats.
-    3.  **Holistic Debugging:** If correcting a value format has failed repeatedly, re-evaluate your entire generation strategy for this field type. For example, if 'passport numbers' are failing, they might require a specific format or checksum you missed.
-    4.  **Ignore External Factors:** The error messages might mention issues outside the data itself (e.g., missing HTTP headers). You MUST recognize these and understand that your **sole responsibility** is to generate a valid array of data for the specified fields.
-    5.  **Uniqueness is Key:** The user requires all generated values to be unique. Do not repeat values across the objects in the array.
-
-    **Output:**
-    Your final output must be **only the corrected, raw JSON array of data**. Do not include any explanations or markdown. This is attempt number ${attemptNumber}.`;
-            
-            const errorContextString = errorHistory.map((err, index) => 
-                `--- Error from Attempt #${index + 1} ---\nStatus: ${err.status}\nResponse:\n${err.body}`
-            ).join('\n\n');
-
-            prompt += `
-            \n---
-            ERROR CORRECTION (HIGHEST PRIORITY):
-            ---
-            Previous attempts to use the generated data failed with API errors. 
-            Analyze the ENTIRE error history below and modify your data generation to resolve all issues. The most recent error is the most relevant.
-            
-            **Full Error History:**
-            ${errorContextString}
-            `;
-        }
-        
-        const modelConfig: any = {
-            systemInstruction,
-            responseMimeType: "application/json",
-        };
-
-        if (errorHistory && errorHistory.length > 0) {
-            modelConfig.thinkingConfig = { thinkingBudget: 24576 };
-        }
-
-        const response = await client.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: modelConfig
-        });
-
-        jsonText = response.text.trim();
-        // Clean JSON output using the robust function
-        const parsableText = cleanJsonOutput(jsonText);
-
-        const parsedData = JSON.parse(parsableText);
-
-        if (!Array.isArray(parsedData)) {
-            throw new Error(`AI did not return a JSON array for field type '${fieldType}'.`);
-        }
-        return parsedData;
-    } catch (e: any) {
-        console.error(`Error during generateFieldArray for type '${fieldType}':`, e);
-        const errorString = (e.message || e.toString()).toLowerCase();
-        if (errorString.includes("api key")) {
-            throw new Error("Gemini API Error: The provided API key is invalid. Please verify the value of the API_KEY environment variable.");
-        }
-        if (e instanceof SyntaxError) {
-            console.error("Raw Gemini response for field array generation:", jsonText);
-            throw new Error(`Could not parse the data from the AI for '${fieldType}'. The response was not valid JSON.`);
-        }
-        throw new Error(`An unexpected error occurred while generating data for '${fieldType}': ${e.message || e.toString()}`);
-    }
-}
-
-/**
- * Fetches all required personalized data sets in parallel.
- */
-async function generatePersonalizationDataSets(
-    requests: DataGenerationRequest[],
-    totalRecords: number,
-    customInstructions: string,
-    errorHistory: { status: number; body: string }[] | null,
-    attemptNumber?: number,
-    apiSpec?: any
-): Promise<Record<string, any[]>> {
-    const dataPromises: Record<string, Promise<any[]>> = {};
-    const uniqueRequestTypes = new Set(requests.map(r => r.formType));
-
-    // Always fetch unique PII for the total number of records
-    dataPromises['pii'] = generateFieldArray('pii', totalRecords, customInstructions, errorHistory, attemptNumber);
-
-    if (apiSpec) {
-        uniqueRequestTypes.forEach(formType => {
-            const relevantRequests = requests.filter(r => r.formType === formType);
-            const maxCount = Math.max(...relevantRequests.map(r => r.count));
-            
-            try {
-                const formDataSchema = apiSpec.components?.schemas?.FormDataDto?.properties?.[formType];
-                if (formDataSchema?.items?.$ref) {
-                    const refName = formDataSchema.items.$ref.split('/').pop();
-                    const itemSchema = refName ? apiSpec.components.schemas[refName] : null;
-                    if (itemSchema) {
-                        dataPromises[formType] = generateFieldArray(formType, maxCount, customInstructions, errorHistory, attemptNumber, itemSchema);
-                    } else {
-                         console.warn(`Could not resolve schema for form type: ${formType}`);
-                    }
-                } else {
-                    console.warn(`Schema definition not found or is invalid for form type: ${formType}`);
-                }
-            } catch (e) {
-                 console.error(`Error processing schema for ${formType}:`, e);
-            }
-        });
-    }
-
-    const promiseEntries = Object.entries(dataPromises);
-    const results = await Promise.all(promiseEntries.map(entry => entry[1]));
-    
-    const dataSets: Record<string, any[]> = {};
-    promiseEntries.forEach((entry, index) => {
-        dataSets[entry[0]] = results[index];
-    });
-
-    return dataSets;
-}
-
 
 export async function generateAndValidatePersonalizedData(
-    basePayloadString: string,
+    basePayload: string,
     requests: DataGenerationRequest[],
     apiSpec: any,
     baseUrl: string,
@@ -1508,197 +1333,70 @@ export async function generateAndValidatePersonalizedData(
     useCorsProxy?: boolean,
     headersConfig?: Header[]
 ): Promise<string> {
-    const errorHistory: { status: number; body: string }[] = [];
-    let finalPayload: any[] = [];
-    let assembledPayloadString: string | null = null;
-    const totalRecords = Math.max(1, ...requests.map(r => r.count));
+    onLog(`Starting bulk data generation based on template...`);
+    
+    // 1. Validate Base Template First
+    onLog(`Validating base template against ${endpointPath}...`);
+    const validatedBase = await generateAndValidateBody(
+        apiSpec, 
+        endpointPath, 
+        'POST', 
+        baseUrl, 
+        'all', 
+        customInstructions, // Pass custom instructions here so the base template respects them
+        onLog, 
+        signal, 
+        3, // Fewer attempts for base validation
+        authToken,
+        useCorsProxy,
+        headersConfig
+    );
+    
+    onLog(`Base template validated. Generating variations...`);
+    
+    const client = getAiClient();
+    const totalCount = requests.reduce((acc, req) => acc + req.count, 0);
+    const variationPrompts = requests.map(r => `${r.count} records of type '${r.formType}'`).join(', ');
 
-    onLog(`Starting efficient data generation for ${totalRecords} records.`);
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        if (signal.aborted) {
-            throw new AutoFixStoppedError('Data generation was stopped by the user.', assembledPayloadString);
-        }
-
-        onLog(`\n--- Attempt ${attempt} of ${maxAttempts} ---`);
+    const prompt = `
+        I have a valid base JSON payload for an API endpoint.
         
-        try {
-            onLog('Instructing AI to generate personalized data fields in parallel...');
-            const dataSets = await generatePersonalizationDataSets(requests, totalRecords, customInstructions, errorHistory, attempt, apiSpec);
-            onLog('AI returned all required data sets.');
+        **Base Payload:**
+        ${validatedBase}
+        
+        **Task:**
+        Generate a JSON array containing exactly ${totalCount} objects.
+        Each object must be a **complete copy** of the base payload, but with specific fields modified to create unique test data.
+        
+        **Variations Required:**
+        ${variationPrompts}
+        
+        **Modifications per Record:**
+        - For 'emails': Change the email address to a unique value (e.g., test.user.123@example.com).
+        - For 'passports': Change the passport number and name.
+        - For 'names': Change the first and last name.
+        - **CRITICAL:** Keep all other fields exactly as they are in the base payload.
+        - Ensure 'submitDateTime' is set to now for all records.
+        
+        Output ONLY the JSON array.
+    `;
 
-            onLog('Assembling full data payload on the client...');
-            const basePayload = JSON.parse(basePayloadString);
-            finalPayload = []; // Reset on each attempt
-            
-            onLog(`For each of the ${totalRecords} records, a full copy of the base payload is created. Then, unique data is injected into specific fields.`);
-            
-            const firstPiiData = dataSets.pii[0];
-            
-            let injectionExample = `Example injection for Record #1:\n`
-            if (firstPiiData) injectionExample += `  - PII: name=${firstPiiData.name}, email=${firstPiiData.email}\n`;
-            
-            const exampleReq = requests[0];
-            if (exampleReq && dataSets[exampleReq.formType]) {
-                const firstExampleData = dataSets[exampleReq.formType][0];
-                if (firstExampleData) {
-                    const firstKey = Object.keys(firstExampleData)[0];
-                    if (firstKey) {
-                        injectionExample += `  - ${exampleReq.formType} Form: ${firstKey}=${firstExampleData[firstKey]}\n`;
-                    }
-                }
-            }
-            onLog(injectionExample);
-            
-            for (let i = 0; i < totalRecords; i++) {
-                const recordTemplate = JSON.parse(JSON.stringify(basePayload)); // Deep copy
-                const piiData = dataSets.pii[i % dataSets.pii.length];
-
-                // Inject base PII
-                recordTemplate.name = piiData.name;
-                recordTemplate.surName = piiData.surName;
-                recordTemplate.phone = piiData.phone;
-                recordTemplate.email = piiData.email; // Also update top-level email if possible
-                recordTemplate.submitDateTime = new Date().toISOString();
-
-                // Inject form-specific data
-                requests.forEach(req => {
-                    const dataSet = dataSets[req.formType];
-                    if (!dataSet) return;
-                    
-                    const data = dataSet[i % dataSet.length];
-
-                    // Generic injection: find the form data array and merge the first item
-                    if (recordTemplate.formData[req.formType] && Array.isArray(recordTemplate.formData[req.formType]) && recordTemplate.formData[req.formType][0]) {
-                        Object.assign(recordTemplate.formData[req.formType][0], data);
-                    }
-                });
-                finalPayload.push(recordTemplate);
-            }
-            assembledPayloadString = JSON.stringify(finalPayload, null, 2);
-            onLog(`✅ Successfully assembled a complete payload with ${finalPayload.length} records.`);
-            
-            const firstRecord = finalPayload[0];
-            onLog(`\nTo ensure efficiency, only the first record will be sent to the API for a quick validation check.`);
-            onLog(`First record sample being sent for validation:\n${JSON.stringify(firstRecord, null, 2)}`);
-            
-            const targetUrl = (baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl) + endpointPath;
-            onLog(`Sending validation request to ${targetUrl}...`);
-
-            const headers: HeadersInit = { 'Content-Type': 'application/json' };
-            
-            if (headersConfig) {
-                for (const header of headersConfig) {
-                    if (header.enabled && header.key) {
-                        (headers as Record<string, string>)[header.key] = header.value;
-                    }
-                }
-            }
-            
-            if (authToken) {
-                let authHeaderValue = authToken;
-                if (!/^bearer /i.test(authHeaderValue)) {
-                    authHeaderValue = `Bearer ${authHeaderValue}`;
-                }
-                (headers as Record<string, string>)['Authorization'] = authHeaderValue;
-            }
-            
-            const fetchOptions: RequestInit = {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(firstRecord),
-                signal,
-            };
-
-            if (networkDiagnosticsEnabled) {
-                performance.clearResourceTimings();
-            }
-
-            let response;
-            if (useCorsProxy) {
-                 onLog('Using CORS Proxy for validation request...');
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) {
-                    throw new Error("Not logged in. A user session is required to use the CORS proxy function.");
-                }
-
-                const functionsUrl = `${supabaseUrl}/functions/v1/cors-proxy`;
-                const proxyOptions: any = {
-                    method: fetchOptions.method,
-                    headers: fetchOptions.headers,
-                    body: fetchOptions.body,
-                };
-
-                response = await fetch(functionsUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${session.access_token}`,
-                        'Content-Type': 'application/json',
-                        'apikey': supabaseAnonKey,
-                    },
-                    body: JSON.stringify({ url: targetUrl, options: proxyOptions }),
-                    signal,
-                });
-            } else {
-                response = await fetch(targetUrl, fetchOptions);
-            }
-
-            if (networkDiagnosticsEnabled) {
-                await new Promise(resolve => setTimeout(resolve, 0)); // Wait for performance entry
-                const entries = performance.getEntriesByName(targetUrl, 'resource');
-                if (entries.length > 0) {
-                    const perfEntry = entries[entries.length - 1] as PerformanceResourceTiming;
-                    if (perfEntry) {
-                        const networkTimings: NetworkTimings = {
-                            dns: perfEntry.domainLookupEnd - perfEntry.domainLookupStart,
-                            tcp: perfEntry.connectEnd - perfEntry.connectStart,
-                            tls: (perfEntry.secureConnectionStart > 0) ? (perfEntry.connectEnd - perfEntry.secureConnectionStart) : 0,
-                            ttfb: perfEntry.responseStart - perfEntry.requestStart,
-                            download: perfEntry.responseEnd - perfEntry.responseStart,
-                            total: perfEntry.duration
-                        };
-                        onLog(`\n--- Network Timing ---\nDNS:        ${networkTimings.dns.toFixed(0)} ms\nTCP:        ${networkTimings.tcp.toFixed(0)} ms\nTLS:        ${networkTimings.tls.toFixed(0)} ms\nTTFB:       ${networkTimings.ttfb.toFixed(0)} ms\nDownload:   ${networkTimings.download.toFixed(0)} ms\n--------------------\nTotal:      ${networkTimings.total.toFixed(0)} ms`);
-                    }
-                }
-            }
-
-            if (response.ok) {
-                onLog(`✅ Validation successful with status ${response.status}! The generated data structure is valid.`);
-                try {
-                    await saveSuccessfulPayload(endpointPath, 'POST', JSON.stringify(firstRecord));
-                    onLog(`✅ Successfully saved the first valid record to the learning database.`);
-                } catch (saveError) {
-                    const errorMessage = saveError instanceof Error ? saveError.message : 'Unknown DB error';
-                    onLog(`⚠️ Could not save payload to learning database: ${errorMessage}`);
-                }
-                return assembledPayloadString;
-            } else {
-                const rawErrorBody = await response.text();
-                const cleanedErrorBody = stripHtml(rawErrorBody).substring(0, 2000);
-                
-                errorHistory.push({ status: response.status, body: cleanedErrorBody });
-                onLog(`❌ Validation failed with status ${response.status}. The API rejected the data. Instructing AI to fix it.`);
-                onLog(`Error Response (Excerpt):\n${cleanedErrorBody.substring(0, 500)}...`);
-                
-                if (attempt === maxAttempts) {
-                    throw new Error(`Data generation failed after ${maxAttempts} attempts. Last error: ${cleanedErrorBody}`);
-                }
-            }
-        } catch (err) {
-             if (err instanceof AutoFixStoppedError) {
-                throw err;
-            }
-            if (err instanceof Error && err.name === 'AbortError') {
-                throw new AutoFixStoppedError('Data generation was stopped by the user during validation.', assembledPayloadString);
-            }
-            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-            onLog(`An error occurred during attempt ${attempt}: ${errorMessage}`);
-            if (attempt === maxAttempts) {
-                throw new Error(`Data generation failed. Error during final attempt: ${errorMessage}`);
-            }
-            errorHistory.push({ status: 0, body: `Client-side error during validation: ${errorMessage}` });
+    const response = await client.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+            responseMimeType: "application/json"
         }
+    });
+    
+    const text = response.text.trim();
+    const json = cleanJsonOutput(text);
+    
+    // Final verification of count
+    const parsed = JSON.parse(json);
+    if (Array.isArray(parsed) && parsed.length !== totalCount) {
+        onLog(`Warning: AI generated ${parsed.length} records instead of ${totalCount}.`);
     }
-
-    throw new Error('Data generation failed to produce a valid payload.');
+    
+    return json;
 }

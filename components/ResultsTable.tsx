@@ -187,6 +187,10 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ results }) => {
                         <td colSpan={6} className="p-0">
                             <div className="px-6 py-4 text-xs font-mono">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                                    <div className="md:col-span-2 bg-blue-900/20 border border-blue-500/30 rounded p-2 mb-2">
+                                        <p className="font-sans font-semibold text-blue-300 mb-1">Trace ID (X-Request-ID)</p>
+                                        <p className="text-white select-all">{result.id}</p>
+                                    </div>
                                     <div>
                                         <p className="font-sans font-semibold text-gray-300 mb-1">Request Details</p>
                                         <p><span className="text-gray-500">Method:</span> {result.method}</p>

@@ -783,6 +783,9 @@ const App: React.FC = () => {
   
   const handleStartTest = useCallback(async (config: LoadTestConfig) => {
     handleReset('start-performance-test');
+    // IMPORTANT: Ensure the results buffer is completely empty before starting to avoid any pollution from previous runs.
+    resultsBatchRef.current = [];
+    
     setStatus(TestStatus.RUNNING);
     setCurrentConfig(config);
 
