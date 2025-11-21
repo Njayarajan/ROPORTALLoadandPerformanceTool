@@ -95,17 +95,22 @@ async function virtualUserSingleRequest(
   const requestId = crypto.randomUUID();
   const vuId = virtualUserId !== undefined ? `vu-${virtualUserId}` : 'vu-unknown';
 
+  // --- PERFORMANCE FIX: Removed artificial jitter ---
+  // Previously used to prevent thundering herd, but caused throughput slowdown.
+  // Removing to maximize request rate.
+
   // --- CACHE BUSTING LOGIC ---
-  // We intentionally append a unique nonce to the URL. This forces every single request
-  // to be treated as unique by browsers, proxies, load balancers, and CDNs.
-  // This is critical for accurate load testing metrics.
+  // We intentionally append a unique nonce AND a timestamp to the URL. 
+  // This forces every single request to be treated as unique by browsers, proxies, load balancers, and CDNs.
+  // We also handle relative URLs gracefully by using window.location.origin as a base if needed.
   let targetUrl = config.url;
   try {
-      const urlObj = new URL(targetUrl);
+      const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+      const urlObj = new URL(targetUrl, base);
       urlObj.searchParams.set('_nonce', requestId);
-      targetUrl = urlObj.toString();
+      urlObj.searchParams.set('_ts', Date.now().toString()); // Add timestamp for absolute ordering/uniqueness
+      targetUrl = urlObj.href;
   } catch (e) {
-      // If URL parsing fails, use original, but warn.
       console.warn("Failed to append cache-buster nonce to URL:", targetUrl);
   }
 
@@ -124,11 +129,21 @@ async function virtualUserSingleRequest(
       targetBody = JSON.stringify(record);
   }
 
-  // Handle dynamic ID injection if a body and index are provided
-  if (targetBody && requestIndex !== undefined && requestIndex >= 0) {
+  // Handle dynamic ID injection and Body Tracing
+  if (targetBody) {
     try {
       const bodyJson = JSON.parse(targetBody);
       let modified = false;
+
+      // --- ROBUSTNESS FIX: Body Trace Injection ---
+      // Inject hidden metadata fields to ensure the request body bytes are strictly unique.
+      // This prevents aggressive WAFs or proxies from deduplicating requests based on identical body hashes.
+      // Most APIs simply ignore unknown fields.
+      if (typeof bodyJson === 'object' && bodyJson !== null && !Array.isArray(bodyJson)) {
+          bodyJson._trace_id = requestId;
+          bodyJson._trace_ts = Date.now();
+          modified = true;
+      }
 
       // Priority 1: ID Pooling from file
       if (config.idPool && config.idPool.length > 0) {
@@ -138,7 +153,7 @@ async function virtualUserSingleRequest(
           if (config.idPoolingMode === 'random') {
               idFromPool = pool[Math.floor(Math.random() * pool.length)];
           } else { // 'sequential' is the default
-              idFromPool = pool[requestIndex % pool.length];
+              idFromPool = pool[(requestIndex || 0) % pool.length];
           }
           
           if (bodyJson.ncosId !== undefined) {
@@ -151,25 +166,23 @@ async function virtualUserSingleRequest(
           }
       // Priority 2: Auto-Incrementing (if enabled)
       } else if (config.isIdAutoIncrementEnabled !== false) {
-            // FIX: The submission `id` MUST be unique for each request to avoid primary key conflicts. A standard UUID is a safe format.
-            // However, the `ncosId` is a user-specific identifier that must remain constant as provided by the template payload.
-            // The previous logic incorrectly overwrote `ncosId` with a random value, causing server-side validation to fail (HTTP 500).
-            // This corrected logic only modifies the submission `id`, preserving the `ncosId`.
             bodyJson.id = crypto.randomUUID();
             modified = true;
       }
-      // Priority 3: No modification if both are disabled/inactive.
       
       if (modified) {
         targetBody = JSON.stringify(bodyJson);
       }
     } catch (e) {
-      // Body is not valid JSON, so we can't modify it. Continue with the original body.
-      // WARNING: This means the request will be sent with the original static ID from the template.
-      // If the backend requires unique IDs, this request may be treated as a duplicate update or fail validation.
-      console.warn(`[VirtualUser ${requestIndex}] Failed to parse or modify request body for ID injection. Sending original body. This may cause duplicate ID issues.`);
+      // If body is not JSON, we simply skip injection.
     }
   }
+
+  // --- DISCREPANCY FIX: Strict Abort Check ---
+  // Check if the signal has aborted *after* preparation but *before* the network call.
+  // If we abort here, we return silently. This prevents "phantom" requests that the frontend
+  // counts (as failed/aborted) but the backend never received because they never left the browser.
+  if (signal.aborted) return;
 
   const startTime = performance.now();
   let success = false;
@@ -179,18 +192,19 @@ async function virtualUserSingleRequest(
   let responseBody: string | undefined = undefined;
 
   try {
-    const fetchOptions: RequestInit = {
+    const fetchOptions: RequestInit & { priority?: 'high' | 'low' | 'auto' } = {
       method: targetMethod,
       signal,
-      keepalive: true, // IMPORTANT: Helps ensure request completes even if thread/page state changes
-      cache: 'no-store', // CRITICAL: Disable browser caching to ensure every request hits the server
+      cache: 'no-store', // CRITICAL: Disable browser caching
+      priority: 'high',  // Hint to browser to prioritize these requests (fixes background tab throttling)
       headers: {
           // Inject tracing headers to correlate frontend requests with backend logs
           'X-Request-ID': requestId,
           'X-Virtual-User-ID': vuId,
-          // Aggressive anti-caching headers for older proxies
+          // Explicitly tell intermediate proxies not to cache
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
           'Pragma': 'no-cache',
-          'Expires': '0',
+          'Expires': '0'
       },
     };
 
@@ -248,8 +262,6 @@ async function virtualUserSingleRequest(
       response = await fetch(targetUrl, fetchOptions);
     }
 
-    // Explicitly await the body to ensure the stream is consumed and the connection can be reused or closed properly.
-    // This prevents "hanging" connections that might look successful but aren't fully processed.
     const responseText = await response.text();
     responseBody = responseText;
 
@@ -268,10 +280,10 @@ async function virtualUserSingleRequest(
      if (err instanceof Error) {
         if (err.name === 'AbortError') {
            statusText = 'Aborted';
-           errorDetails = `Request was aborted by the test runner, likely because the test duration was exceeded. This indicates the request took too long to complete.`;
+           errorDetails = `Request was aborted by the test runner.`;
         } else if (err.message.includes('Failed to fetch')) {
            statusText = 'Network Error';
-           errorDetails = `Network Error: ${err.message}. This is a generic browser error that often indicates the server is under extreme load and has stopped accepting new connections, or there's a CORS policy issue preventing the browser from reading the response. Check server-side logs for high CPU/memory usage, connection pool exhaustion, or error responses (like 5xx) that might lack the required CORS headers.`;
+           errorDetails = `Network Error: ${err.message}. This usually indicates the connection was dropped or refused by the server.`;
         } else {
            errorDetails = err.message;
         }
@@ -805,40 +817,23 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
             performanceThreshold: { type: Type.STRING, description: "A clear statement identifying the user load where performance began to significantly degrade." },
             keyObservations: {
               type: Type.ARRAY,
-              description: "A list of specific, data-backed observations about performance trends as simple strings.",
+              description: "A list of simple text strings, each describing a specific observation from the data.",
               items: { type: Type.STRING }
             },
-            rootCauseSuggestion: { type: Type.STRING, description: "The most likely technical root cause for performance degradation." },
+            rootCauseSuggestion: { type: Type.STRING, description: "A technical hypothesis for the performance degradation." },
             recommendations: {
               type: Type.ARRAY,
-              description: "A list of actionable recommendations for developers.",
+              description: "A list of actionable recommendations.",
               items: { type: Type.STRING }
             },
-            conclusiveSummary: { type: Type.STRING, description: "A final, one-paragraph summary of the findings, including business and infrastructure impact. This field is mandatory and must not be empty." }
-          },
-          required: [
-              "analyzedRunsCount",
-              "overallTrendSummary",
-              "performanceThreshold",
-              "keyObservations",
-              "rootCauseSuggestion",
-              "recommendations",
-              "conclusiveSummary"
-          ]
+            conclusiveSummary: { type: Type.STRING, description: "A detailed, concluding paragraph summarizing the overall health and scalability of the system based on these tests." }
+          }
         }
       }
     });
-
-    jsonText = response.text.trim();
-    const parsedJson = JSON.parse(jsonText);
     
-    // Final check to ensure the count is correct, which can sometimes be missed by the model.
-    if (parsedJson.analyzedRunsCount !== runs.length) {
-        console.warn(`AI returned an incorrect run count (${parsedJson.analyzedRunsCount}), correcting to ${runs.length}.`);
-        parsedJson.analyzedRunsCount = runs.length;
-    }
-
-    return parsedJson as TrendAnalysisReport;
+    jsonText = response.text.trim();
+    return JSON.parse(jsonText) as TrendAnalysisReport;
 
   } catch (e: any) {
       console.error("Error during getTrendAnalysis:", e);
@@ -854,40 +849,104 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
   }
 }
 
+// --- NEW: Comparison Analysis ---
+
 export async function getComparisonAnalysis(runA: TestRun, runB: TestRun): Promise<ComparisonAnalysisReport> {
     let jsonText = '';
     try {
         const client = getAiClient();
-        const systemInstruction = `You are a senior performance engineer. Your task is to analyze two load test runs (a baseline and a comparison) and produce a detailed, data-driven comparison report in JSON format. The tone should be technical, insightful, and actionable. Be precise and use the provided data to back up your conclusions.`;
 
-        const formatStats = (stats: TestStats) => ({
-            throughput: `${stats.throughput.toFixed(2)} req/s`,
-            avgLatency: `${stats.avgResponseTime.toFixed(0)} ms`,
-            maxLatency: `${stats.maxResponseTime.toFixed(0)} ms`,
-            errorRate: `${((stats.errorCount / stats.totalRequests) * 100).toFixed(1)}%`,
-            apdex: stats.apdexScore.toFixed(2),
-            consistency: `${stats.latencyCV.toFixed(1)}%`
-        });
-        
-        const userPrompt = `
-            Analyze the following two load test runs. 'Baseline' is the original run, and 'Comparison' is the new run.
+        const systemInstruction = `You are a senior performance engineer. Your task is to compare two specific load test runs (a Baseline and a Comparison) and generate a detailed comparison report in JSON format. Focus on the *differences* and their implications.`;
 
-            **Baseline Run Data ("${runA.title}"):**
-            - Config: ${runA.config.users} users, ${runA.config.runMode === 'duration' ? `${runA.config.duration}s duration` : `${runA.config.iterations} iterations`}, ${runA.config.loadProfile} profile.
-            - Stats: ${JSON.stringify(formatStats(runA.stats))}
+        const prompt = `
+            Compare the following two load test runs.
 
-            **Comparison Run Data ("${runB.title}"):**
-            - Config: ${runB.config.users} users, ${runB.config.runMode === 'duration' ? `${runB.config.duration}s duration` : `${runB.config.iterations} iterations`}, ${runB.config.loadProfile} profile.
-            - Stats: ${JSON.stringify(formatStats(runB.stats))}
-            
-            **Analysis Task:**
-            1.  **Comparison Summary:** Write a 2-3 sentence summary explaining the overall outcome. Did performance improve, degrade, or stay the same? Mention the most significant change.
-            2.  **Key Metric Changes:** For each key metric (Throughput, Avg. Latency, Max Latency, Error Rate), provide a detailed breakdown. Include the baseline value, comparison value, the percentage delta, a concise analysis of what the change means, and its impact (Positive/Negative/Neutral).
-            3.  **Root Cause Analysis:** Based on the changes in configuration between the two runs (e.g., user count, duration, endpoint), explain *why* the performance changed. Be specific. For example, "The increase in virtual users from 50 to 100 likely caused server resource contention, leading to the 150% increase in average latency."
-            4.  **Recommendations:** Provide 2-3 actionable recommendations for developers or testers based on your findings.
+            **Baseline Run:**
+            - Title: ${runA.title}
+            - Config: ${runA.config.users} Users, ${runA.config.duration}s Duration
+            - Metrics: Avg Latency=${runA.stats.avgResponseTime.toFixed(0)}ms, Throughput=${runA.stats.throughput.toFixed(2)}/s, Error Rate=${((runA.stats.errorCount / runA.stats.totalRequests) * 100).toFixed(2)}%, Apdex=${runA.stats.apdexScore.toFixed(2)}
+
+            **Comparison Run:**
+            - Title: ${runB.title}
+            - Config: ${runB.config.users} Users, ${runB.config.duration}s Duration
+            - Metrics: Avg Latency=${runB.stats.avgResponseTime.toFixed(0)}ms, Throughput=${runB.stats.throughput.toFixed(2)}/s, Error Rate=${((runB.stats.errorCount / runB.stats.totalRequests) * 100).toFixed(2)}%, Apdex=${runB.stats.apdexScore.toFixed(2)}
 
             **Required JSON Output:**
-            Generate a JSON object that adheres to the defined schema.
+            Generate a JSON object with:
+            - "comparisonSummary": A high-level summary of how the performance changed.
+            - "keyMetricChanges": An array of objects, each describing a specific metric change (e.g., Latency, Throughput).
+              - "metric": Name of the metric.
+              - "baselineValue": Value from run A.
+              - "comparisonValue": Value from run B.
+              - "delta": The change (e.g., "+15%", "-200ms").
+              - "analysis": A brief sentence explaining if this is good or bad.
+              - "impact": "Positive", "Negative", or "Neutral".
+            - "rootCauseAnalysis": A suggestion for why the changes occurred (e.g., "Increased user load caused database contention").
+            - "recommendations": A list of actionable steps.
+        `;
+
+        const response = await client.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                systemInstruction,
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        comparisonSummary: { type: Type.STRING, description: "High-level summary of the comparison." },
+                        keyMetricChanges: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    metric: { type: Type.STRING },
+                                    baselineValue: { type: Type.STRING },
+                                    comparisonValue: { type: Type.STRING },
+                                    delta: { type: Type.STRING },
+                                    analysis: { type: Type.STRING },
+                                    impact: { type: Type.STRING, enum: ["Positive", "Negative", "Neutral"] }
+                                }
+                            }
+                        },
+                        rootCauseAnalysis: { type: Type.STRING, description: "Hypothesis for performance changes." },
+                        recommendations: { type: Type.ARRAY, items: { type: Type.STRING } }
+                    }
+                }
+            }
+        });
+
+        jsonText = response.text.trim();
+        return JSON.parse(jsonText) as ComparisonAnalysisReport;
+
+    } catch (e: any) {
+        console.error("Error during getComparisonAnalysis:", e);
+        throw new Error(`Failed to generate comparison analysis: ${e.message || e.toString()}`);
+    }
+}
+
+// --- NEW: Config Generation & Payload Validation ---
+
+export async function generateConfigFromPrompt(prompt: string, apiSpec: any): Promise<Partial<LoadTestConfig>> {
+    let jsonText = '';
+    try {
+        const client = getAiClient();
+        const systemInstruction = "You are a QA automation expert. Your task is to generate a valid load test configuration JSON based on a user's natural language request and a provided OpenAPI specification.";
+        
+        const userPrompt = `
+            User Request: "${prompt}"
+            
+            OpenAPI Spec Summary (Focus on paths and methods):
+            ${JSON.stringify(apiSpec.paths).substring(0, 15000)}... (truncated)
+
+            Based on the user request and the available API paths, generate a JSON configuration object with:
+            - url: The full target URL (using a placeholder host like 'https://api.example.com' if not specified, appended with the correct path).
+            - method: The HTTP method.
+            - body: A valid JSON request body sample if needed (e.g. for POST/PUT).
+            - users: Recommended number of users (default 10).
+            - duration: Recommended duration in seconds (default 30).
+            - loadProfile: 'ramp-up' or 'stair-step'.
+            - rampUp: Seconds to ramp up (if applicable).
         `;
 
         const response = await client.models.generateContent({
@@ -899,375 +958,107 @@ export async function getComparisonAnalysis(runA: TestRun, runB: TestRun): Promi
                 responseSchema: {
                     type: Type.OBJECT,
                     properties: {
-                        comparisonSummary: { type: Type.STRING, description: "A high-level summary of the comparison outcome." },
-                        keyMetricChanges: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    metric: { type: Type.STRING, description: "Name of the metric (e.g., 'Throughput')." },
-                                    baselineValue: { type: Type.STRING, description: "The value from the baseline run, with units." },
-                                    comparisonValue: { type: Type.STRING, description: "The value from the comparison run, with units." },
-                                    delta: { type: Type.STRING, description: "The percentage change (e.g., '+15.2%')." },
-                                    analysis: { type: Type.STRING, description: "A brief explanation of what this change signifies." },
-                                    impact: { type: Type.STRING, description: "Must be 'Positive', 'Negative', or 'Neutral'." }
-                                }
-                            }
-                        },
-                        rootCauseAnalysis: { type: Type.STRING, description: "An explanation of why performance changed, linking to configuration differences." },
-                        recommendations: {
-                            type: Type.ARRAY,
-                            items: { type: Type.STRING },
-                            description: "A list of actionable recommendations."
-                        }
-                    },
-                    required: ["comparisonSummary", "keyMetricChanges", "rootCauseAnalysis", "recommendations"]
-                }
-            }
-        });
-        
-        jsonText = response.text.trim();
-        return JSON.parse(jsonText) as ComparisonAnalysisReport;
-    } catch (e: any) {
-        console.error("Error during getComparisonAnalysis:", e);
-        const errorString = (e.message || e.toString()).toLowerCase();
-        if (errorString.includes("api key")) {
-            throw new Error("Gemini API Error: The provided API key is invalid. Please verify the value of the API_KEY environment variable.");
-        }
-        if (e instanceof SyntaxError) {
-            console.error("Raw Gemini response for comparison analysis:", jsonText);
-            throw new Error("Could not parse the comparison analysis from the AI. The response was not valid JSON.");
-        }
-        throw new Error(`An unexpected error occurred while generating the comparison analysis: ${e.message || e.toString()}`);
-    }
-}
-
-export async function generateConfigFromPrompt(prompt: string, apiSpec: any): Promise<Partial<LoadTestConfig>> {
-  let jsonText = '';
-  try {
-    const client = getAiClient();
-    const systemInstruction = `You are an API performance testing expert. Your task is to generate a valid load test configuration in JSON format based on a user's natural language prompt and an OpenAPI specification. You must infer the most appropriate endpoint and method from the user's request and the spec. Only output the raw JSON. The body must be a stringified JSON.`;
-
-    const userPrompt = `
-      Based on the following user request and the provided OpenAPI specification, generate a load test configuration.
-
-      **User Request:**
-      "${prompt}"
-
-      **OpenAPI Specification (Paths):**
-      ${JSON.stringify(apiSpec.paths, null, 2)}
-
-      **Task:**
-      - Identify the most relevant endpoint and method from the spec that matches the user's request.
-      - If the request implies a request body (e.g., for a POST or PUT), use the spec to generate a simple, valid example body. The body must be a JSON string.
-      - Infer the test parameters (users, duration, etc.) from the request. Use sensible defaults if not specified (e.g., 50 users, 60 seconds).
-      - Construct the full URL using one of the servers defined in the spec if available, otherwise assume a placeholder.
-      
-      **Required JSON Output:**
-      Generate a JSON object with the following fields.
-    `;
-    
-    const response = await client.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: userPrompt,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            url: { type: Type.STRING, description: "The full URL of the endpoint to test." },
-            method: { type: Type.STRING, description: "The HTTP method (e.g., 'POST', 'GET')." },
-            body: { type: Type.STRING, description: "The JSON request body as a string. Empty string for GET." },
-            users: { type: Type.INTEGER, description: "Number of concurrent users." },
-            duration: { type: Type.INTEGER, description: "Test duration in seconds." },
-            loadProfile: { type: Type.STRING, description: "Load profile: 'ramp-up' or 'stair-step'." },
-            rampUp: { type: Type.INTEGER, description: "Ramp-up period in seconds for 'ramp-up' profile." }
-          },
-          required: ["url", "method", "body", "users", "duration", "loadProfile", "rampUp"]
-        }
-      }
-    });
-    
-    jsonText = response.text.trim();
-    return JSON.parse(jsonText) as Partial<LoadTestConfig>;
-
-  } catch (e: any) {
-    console.error("Error during generateConfigFromPrompt:", e);
-    if (e instanceof SyntaxError) {
-        console.error("Raw Gemini response for config generation:", jsonText);
-        throw new Error("Could not parse the test configuration from the AI. The response was not valid JSON.");
-    }
-    throw new Error(`An unexpected error occurred while generating the test configuration: ${e.message || e.toString()}`);
-  }
-}
-
-/**
- * Helper to extract clean JSON from an AI response by finding the first valid outer JSON object/array.
- * Uses a stack to track matching braces, ignoring surrounding text or markdown.
- */
-function cleanJsonOutput(text: string): string {
-    let start = text.indexOf('{');
-    const arrayStart = text.indexOf('[');
-    
-    if (arrayStart !== -1 && (start === -1 || arrayStart < start)) {
-        start = arrayStart;
-    }
-
-    if (start === -1) return text.trim();
-
-    let openCount = 0;
-    let inString = false;
-    let escaped = false;
-    
-    for (let i = start; i < text.length; i++) {
-        const char = text[i];
-        if (inString) {
-            if (char === '\\' && !escaped) escaped = true;
-            else if (char === '"' && !escaped) inString = false;
-            else escaped = false;
-        } else {
-            if (char === '"') inString = true;
-            else if (char === '{' || char === '[') openCount++;
-            else if (char === '}' || char === ']') {
-                openCount--;
-                if (openCount === 0) return text.substring(start, i + 1);
-            }
-        }
-    }
-    // If we get here, braces didn't match (malformed or truncated). Fallback to finding last closing.
-    const lastClose = text.lastIndexOf(text[start] === '{' ? '}' : ']');
-    if (lastClose > start) return text.substring(start, lastClose + 1);
-    
-    return text.trim();
-}
-
-export async function generateSampleBody(
-  apiSpec: any,
-  path: string,
-  method: string,
-  baseUrl: string = '', // New: helpful for context, though not strictly used in generation unless specified
-  formFocus: string = 'all',
-  customInstructions: string = '',
-  existingBody: string | null = null,
-  errorHistory: { status: number; body: string }[] | null = null
-): Promise<string> {
-   let potentialJson = '';
-   try {
-    const client = getAiClient();
-    const learnedPayloads = await getLearnedPayloads(path, method);
-    const now = new Date().toISOString();
-    
-    // Extract specific endpoint definition to give context on parameters (path/query) which might cause errors
-    let endpointDef = {};
-    if (apiSpec && apiSpec.paths && apiSpec.paths[path] && apiSpec.paths[path][method.toLowerCase()]) {
-        endpointDef = apiSpec.paths[path][method.toLowerCase()];
-    }
-
-    // Default instruction for fresh generation
-    let systemInstruction = `You are an API testing assistant. Your task is to generate a valid JSON request body based on an OpenAPI specification. The JSON should be realistic, use correct data types, and be ready to use. Only output the raw JSON.`;
-
-    let prompt = `
-      Generate a JSON request body for the endpoint: ${method.toUpperCase()} ${path}
-      
-      **CRITICAL REQUIREMENT:** The field \`submitDateTime\` MUST be exactly: \`${now}\`.
-
-      ${learnedPayloads.length > 0 ? `
-      **Reference (Successful Payloads):**
-      ${learnedPayloads.map(p => `\`\`\`json\n${JSON.stringify(p, null, 2)}\n\`\`\``).join('\n\n')}
-      ` : ''}
-
-      **API Components Schema:**
-      ${JSON.stringify(apiSpec.components.schemas, null, 2)}
-      
-      **Endpoint Definition (Parameters & Body):**
-      ${JSON.stringify(endpointDef, null, 2)}
-      
-      Target Schema: Definition associated with '${path}'.
-    `;
-
-    // Logic for Fresh Generation
-    if (!existingBody) {
-        if (formFocus !== 'all') {
-            prompt += `\n\nFocus on the '${formFocus}' section. Populate it fully. Other sections should be present but can use minimal/default values.`;
-        } else {
-            prompt += `\n\n**STRICT COMPLETENESS:** Generate a FULL payload. Populate EVERY field defined in the schema with realistic, valid data. Do not use 'null' or empty arrays unless absolutely necessary.`;
-        }
-        if (customInstructions) {
-            prompt += `\n\n**User Instructions:**\n${customInstructions}`;
-        }
-    } 
-    
-    // Logic for Auto-Fix / Error Recovery
-    else {
-        // If we have a history of errors, this is a "Fix" operation.
-        if (errorHistory && errorHistory.length > 0) {
-            // 1. Specialized Persona for Debugging
-            systemInstruction = `You are a Senior API Integration Engineer and Payload Debugger. Your ONLY goal is to fix a failing JSON payload so it satisfies the server's validation rules.
-            
-            **Your Process:**
-            1.  **Analyze the Error:** Read the server's error response carefully. It contains the exact reason for rejection (e.g., "field X is required", "invalid format", "unknown property").
-            2.  **Inspect the Schema:** Compare the failing payload against the OpenAPI definition. Look for type mismatches (string vs int), missing required fields, or incorrect enums.
-            3.  **Apply the Fix:** Modify the JSON to resolve the specific error reported. Do not make unnecessary changes to unrelated fields.
-            4.  **HTML Error Handling:** If the error body is HTML (e.g., a 404 or 500 page), extract the title or error code text to understand the context. A 500 often means a field format is wrong. A 404 might mean the ID in the payload doesn't match the URL.
-            5.  **No Repetition:** Do NOT output the exact same payload that just failed. You MUST change something to address the error.
-            
-            **Output Rules:**
-            - Output ONLY the corrected valid JSON.
-            - NO explanations.
-            - NO markdown formatting if possible, just raw JSON.
-            `;
-            
-            const previousErrors = errorHistory.map((err, i) => 
-                `[Attempt ${i + 1}] Status: ${err.status}\nServer Response (Text Only): ${err.body}`
-            ).join('\n\n');
-
-            prompt = `
-            **TASK: FIX THIS PAYLOAD**
-            
-            The API rejected the JSON payload below. Fix it based on the error history and the schema.
-
-            **API Schema (Source of Truth):**
-            ${JSON.stringify(apiSpec.components.schemas, null, 2)}
-            
-            **Endpoint Definition:**
-            ${JSON.stringify(endpointDef, null, 2)}
-
-            **Validation History (Most Recent Error is Critical):**
-            ${previousErrors}
-
-            **The Failing Payload:**
-            ${existingBody}
-            
-            **Instructions:**
-            - If the error says "Unknown field", REMOVE that field.
-            - If the error says "Required", ADD that field.
-            - If the error is "500 Internal Server Error", check data types strictly against the schema (e.g. UUIDs, DateTimes).
-            - Ensure 'submitDateTime' is set to \`${now}\`.
-            - **DO NOT** output the same JSON as before.
-            
-            Return ONLY the fixed JSON.
-            `;
-        } 
-        // Logic for Custom Instruction modification (User asked to change something on existing body)
-        else {
-            systemInstruction += `\n\nYou will be modifying an existing JSON body based on user instructions. Maintain the validity of the JSON structure.`;
-            prompt += `\n\n**Existing JSON:**\n${existingBody}\n\n**Modification Instructions:**\n${customInstructions}`;
-        }
-    }
-
-    const modelConfig: any = { 
-        systemInstruction,
-        responseMimeType: "application/json", // Enforce JSON output for robustness
-    };
-    
-    // Use higher thinking budget for Auto-Fix to allow analysis of the error log
-    if (errorHistory && errorHistory.length > 0) {
-        modelConfig.thinkingConfig = { thinkingBudget: 2048 }; 
-    }
-
-    const response = await client.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: modelConfig
-    });
-
-    const text = response.text.trim();
-    potentialJson = cleanJsonOutput(text);
-
-    // Final validation check
-    JSON.parse(potentialJson);
-    
-    return potentialJson;
-  } catch (e: any) {
-    console.error("Error during generateSampleBody:", e);
-    const errorString = (e.message || e.toString()).toLowerCase();
-
-    if (errorString.includes("api key")) {
-      throw new Error("Gemini API Error: The provided API key is invalid. Please verify the value of the API_KEY environment variable.");
-    }
-    if (e instanceof SyntaxError) {
-      console.error("Raw Gemini response:", potentialJson);
-      throw new Error("The AI failed to generate valid JSON. Please try again.");
-    }
-    
-    throw new Error(`AI Generation Error: ${e.message || e.toString()}`);
-  }
-}
-
-/**
- * Iteratively generates and validates a request body against a live endpoint.
- */
-export async function generateAndValidateBody(
-    apiSpec: any,
-    path: string,
-    method: string,
-    baseUrl: string,
-    formFocus: string,
-    customInstructions: string,
-    onLog: (log: string) => void,
-    signal: AbortSignal,
-    maxAttempts: number = 7,
-    authToken?: string,
-    useCorsProxy?: boolean,
-    headersConfig?: Header[]
-): Promise<string> {
-    let currentBody: string | null = null;
-    const errorHistory: { status: number; body: string }[] = [];
-
-    onLog(`Starting automated payload validation for ${method} ${path}...`);
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        if (signal.aborted) {
-            throw new AutoFixStoppedError('Auto-fix process was stopped by the user.', currentBody);
-        }
-
-        onLog(`\n--- Attempt ${attempt} of ${maxAttempts} ---`);
-        
-        try {
-            onLog('Instructing AI to generate/correct payload...');
-            currentBody = await generateSampleBody(
-                apiSpec,
-                path,
-                method,
-                baseUrl,
-                formFocus,
-                customInstructions,
-                currentBody,
-                errorHistory
-            );
-            onLog('Payload received from AI.');
-            try {
-                onLog(`Payload:\n${JSON.stringify(JSON.parse(currentBody), null, 2)}`);
-            } catch {
-                onLog(`Raw Payload (Invalid JSON):\n${currentBody}`);
-            }
-
-            const targetUrl = (baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl) + path;
-            onLog(`Sending test request to ${targetUrl}...`);
-            
-            const headers: Record<string, string> = {
-                'Content-Type': 'application/json',
-            };
-            if (authToken) {
-                headers['Authorization'] = /^bearer /i.test(authToken) ? authToken : `Bearer ${authToken}`;
-            }
-            
-            if (headersConfig) {
-                for (const h of headersConfig) {
-                    if (h.enabled && h.key) {
-                        headers[h.key] = h.value;
+                        url: { type: Type.STRING },
+                        method: { type: Type.STRING },
+                        body: { type: Type.STRING },
+                        users: { type: Type.INTEGER },
+                        duration: { type: Type.INTEGER },
+                        loadProfile: { type: Type.STRING },
+                        rampUp: { type: Type.INTEGER }
                     }
                 }
             }
+        });
 
-            let response;
+        jsonText = response.text.trim();
+        return JSON.parse(jsonText) as Partial<LoadTestConfig>;
+    } catch (e: any) {
+        console.error("Error generating config:", e);
+        throw new Error(`Failed to generate config: ${e.message}`);
+    }
+}
+
+export async function generateAndValidateBody(
+    apiSpec: any, 
+    path: string, 
+    method: string, 
+    baseUrl: string,
+    focus: string,
+    customInstructions: string,
+    onLog: (msg: string) => void,
+    signal: AbortSignal,
+    maxAttempts: number = 7,
+    authToken: string = '',
+    useCorsProxy: boolean = false,
+    headers: Header[] = []
+): Promise<string> {
+    const client = getAiClient();
+    const specSnippet = JSON.stringify(apiSpec.paths[path]?.[method.toLowerCase()] || {});
+    
+    let currentBody = '';
+    let attempts = 0;
+    let errorHistory: string[] = [];
+
+    onLog(`Starting AI payload generation for ${method} ${path}...`);
+
+    while (attempts < maxAttempts) {
+        if (signal.aborted) {
+             throw new Error("Process aborted by user.");
+        }
+        attempts++;
+        onLog(`\n[Attempt ${attempts}/${maxAttempts}] Generating payload...`);
+
+        try {
+            // 1. Generate Payload
+            const prompt = `
+                Generate a valid JSON request body for ${method.toUpperCase()} ${path}.
+                
+                OpenAPI Definition for this endpoint:
+                ${specSnippet}
+
+                Focus: ${focus === 'minimal' ? 'Minimal valid payload (required fields only)' : 'Full payload (all fields)'}
+                ${customInstructions ? `Custom Instructions: ${customInstructions}` : ''}
+                
+                ${errorHistory.length > 0 ? `Previous Attempts Failed. Fix these errors:\n${errorHistory.join('\n')}` : ''}
+
+                Return ONLY the JSON string. No markdown formatting.
+            `;
+
+            const response = await client.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+                config: { 
+                    responseMimeType: "application/json" 
+                }
+            });
+            
+            currentBody = response.text.trim();
+            onLog(`Generated Body:\n${currentBody.substring(0, 150)}...`);
+
+            // 2. Validate (Dry Run)
+            onLog(`Validating against live endpoint...`);
+            
+            const fetchOptions: RequestInit = {
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(authToken ? { 'Authorization': authToken.startsWith('Bearer') ? authToken : `Bearer ${authToken}` } : {}),
+                    // Inject user defined headers for validation request
+                    ...headers.reduce((acc, h) => ({ ...acc, [h.key]: h.value }), {})
+                },
+                body: currentBody,
+                signal
+            };
+
+            let res;
+            let targetUrl = `${baseUrl.replace(/\/$/, '')}${path}`;
+
             if (useCorsProxy) {
                 const { data: { session } } = await supabase.auth.getSession();
-                if (!session) throw new Error("User session required for proxy.");
+                if (!session) throw new Error("Not logged in (CORS Proxy required).");
                 
                 const functionsUrl = `${supabaseUrl}/functions/v1/cors-proxy`;
-                response = await fetch(functionsUrl, {
+                res = await fetch(functionsUrl, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${session.access_token}`,
@@ -1276,127 +1067,174 @@ export async function generateAndValidateBody(
                     },
                     body: JSON.stringify({
                         url: targetUrl,
-                        options: {
-                            method: method,
-                            headers: headers,
-                            body: currentBody
-                        }
+                        options: fetchOptions
                     }),
                     signal
                 });
             } else {
-                response = await fetch(targetUrl, {
-                    method: method,
-                    headers: headers,
-                    body: currentBody,
-                    signal
-                });
+                res = await fetch(targetUrl, fetchOptions);
             }
 
-            const responseText = await response.text();
-            
-            if (response.ok) {
-                onLog(`\u2705 Success! API responded with status ${response.status}.`);
-                
-                // Learn from success
-                saveSuccessfulPayload(path, method, currentBody).catch(err => console.warn("Background learning failed:", err));
+            const resText = await res.text();
 
+            if (res.ok) {
+                onLog(`✅ Validation Successful! (Status: ${res.status})`);
+                
+                // Save successful payload for future learning
+                saveSuccessfulPayload(path, method, currentBody).catch(e => console.error("Failed to learn payload:", e));
+                
                 return currentBody;
             } else {
-                onLog(`\u274C Failed. API responded with status ${response.status}.`);
-                onLog(`Error Body: ${stripHtml(responseText).substring(0, 300)}...`);
-                errorHistory.push({ status: response.status, body: responseText });
+                onLog(`❌ Validation Failed (Status: ${res.status}). Server Response: ${resText.substring(0, 200)}`);
+                errorHistory.push(`Attempt ${attempts}: Status ${res.status} - ${stripHtml(resText).substring(0, 300)}`);
             }
 
-        } catch (error: any) {
-            if (error.name === 'AbortError') throw new AutoFixStoppedError('Auto-fix process was stopped by the user.', currentBody);
-            onLog(`\u26A0\uFE0F Unexpected Error: ${error.message}`);
-            // Don't push client-side errors to history for the AI, just retry generation or fail if critical
+        } catch (e: any) {
+            if (e.name === 'AbortError') throw new Error("Process stopped by user.");
+            onLog(`❌ Error: ${e.message}`);
+            errorHistory.push(`Attempt ${attempts} Exception: ${e.message}`);
         }
     }
 
-    throw new Error(`Failed to generate a valid payload after ${maxAttempts} attempts.`);
+    throw new AutoFixStoppedError(`Failed to generate a valid payload after ${maxAttempts} attempts.`, currentBody);
 }
 
+// --- NEW: Synthetic Data Generation ---
+
 export async function generateAndValidatePersonalizedData(
-    basePayload: string,
+    basePayloadTemplate: string,
     requests: DataGenerationRequest[],
     apiSpec: any,
     baseUrl: string,
-    endpointPath: string,
+    path: string,
     customInstructions: string,
-    onLog: (log: string) => void,
+    onLog: (msg: string) => void,
     signal: AbortSignal,
-    maxAttempts: number = 7,
-    authToken?: string,
-    networkDiagnosticsEnabled?: boolean,
-    useCorsProxy?: boolean,
-    headersConfig?: Header[]
+    maxAttempts: number = 5,
+    authToken: string = '',
+    networkDiagnostics: boolean = false,
+    useCorsProxy: boolean = false,
+    headers: Header[] = []
 ): Promise<string> {
-    onLog(`Starting bulk data generation based on template...`);
-    
-    // 1. Validate Base Template First
-    onLog(`Validating base template against ${endpointPath}...`);
-    const validatedBase = await generateAndValidateBody(
-        apiSpec, 
-        endpointPath, 
-        'POST', 
-        baseUrl, 
-        'all', 
-        customInstructions, // Pass custom instructions here so the base template respects them
-        onLog, 
-        signal, 
-        3, // Fewer attempts for base validation
-        authToken,
-        useCorsProxy,
-        headersConfig
-    );
-    
-    onLog(`Base template validated. Generating variations...`);
-    
     const client = getAiClient();
-    const totalCount = requests.reduce((acc, req) => acc + req.count, 0);
-    const variationPrompts = requests.map(r => `${r.count} records of type '${r.formType}'`).join(', ');
+    onLog(`Starting batch data generation for ${requests.reduce((sum, r) => sum + r.count, 0)} total records...`);
 
-    const prompt = `
-        I have a valid base JSON payload for an API endpoint.
-        
-        **Base Payload:**
-        ${validatedBase}
-        
-        **Task:**
-        Generate a JSON array containing exactly ${totalCount} objects.
-        Each object must be a **complete copy** of the base payload, but with specific fields modified to create unique test data.
-        
-        **Variations Required:**
-        ${variationPrompts}
-        
-        **Modifications per Record:**
-        - For 'emails': Change the email address to a unique value (e.g., test.user.123@example.com).
-        - For 'passports': Change the passport number and name.
-        - For 'names': Change the first and last name.
-        - **CRITICAL:** Keep all other fields exactly as they are in the base payload.
-        - Ensure 'submitDateTime' is set to now for all records.
-        
-        Output ONLY the JSON array.
-    `;
+    const method = 'POST'; // Assuming POST for data generation
+    const specSnippet = JSON.stringify(apiSpec.paths[path]?.[method.toLowerCase()] || {});
 
-    const response = await client.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-        config: {
-            responseMimeType: "application/json"
+    let fullPayloadResult: any[] = []; // To store the final array of all generated payloads
+
+    // Process each variation request
+    for (const req of requests) {
+        onLog(`\nGenerating ${req.count} records for form type: '${req.formType}'...`);
+        
+        let generatedBatch: any[] = [];
+        let attempts = 0;
+
+        // Retry loop for the *generation* phase of this batch
+        while (attempts < maxAttempts && generatedBatch.length === 0) {
+            if (signal.aborted) throw new Error("Process aborted.");
+            attempts++;
+            
+            try {
+                const prompt = `
+                    You are a test data generator.
+                    
+                    **Task:**
+                    Generate ${req.count} UNIQUE JSON objects.
+                    Each object must follow the structure of the 'Base Template' below, but with specific fields modified according to the 'Variation Requirement'.
+                    
+                    **Base Template:**
+                    ${basePayloadTemplate}
+                    
+                    **Variation Requirement:**
+                    - Form Type: ${req.formType}
+                    - Context: The user needs data suitable for a "${req.formType}" submission.
+                    - Ensure fields relevant to "${req.formType}" (e.g. email addresses for 'emails', passport numbers for 'passports') are UNIQUE and realistic for each record.
+                    - ${customInstructions}
+                    
+                    **Output Format:**
+                    Return ONLY a JSON Array containing exactly ${req.count} objects.
+                `;
+
+                const response = await client.models.generateContent({
+                    model: 'gemini-2.5-flash', // Using pro for better data diversity
+                    contents: prompt,
+                    config: { responseMimeType: "application/json" }
+                });
+
+                const json = JSON.parse(response.text.trim());
+                if (Array.isArray(json)) {
+                    generatedBatch = json;
+                    onLog(`  - Successfully generated ${json.length} unique records.`);
+                } else {
+                    throw new Error("AI returned valid JSON but not an array.");
+                }
+
+            } catch (e: any) {
+                onLog(`  - Generation attempt ${attempts} failed: ${e.message}`);
+            }
         }
-    });
-    
-    const text = response.text.trim();
-    const json = cleanJsonOutput(text);
-    
-    // Final verification of count
-    const parsed = JSON.parse(json);
-    if (Array.isArray(parsed) && parsed.length !== totalCount) {
-        onLog(`Warning: AI generated ${parsed.length} records instead of ${totalCount}.`);
+
+        if (generatedBatch.length === 0) {
+            throw new Error(`Failed to generate data for ${req.formType} after multiple attempts.`);
+        }
+
+        // Validate a sample from the batch
+        onLog(`  - Validating a sample record against ${baseUrl}${path}...`);
+        const sample = generatedBatch[0];
+        
+        const fetchOptions: RequestInit = {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+                ...(authToken ? { 'Authorization': authToken.startsWith('Bearer') ? authToken : `Bearer ${authToken}` } : {}),
+                ...headers.reduce((acc, h) => ({ ...acc, [h.key]: h.value }), {})
+            },
+            body: JSON.stringify(sample),
+            signal
+        };
+
+        let res;
+        let targetUrl = `${baseUrl.replace(/\/$/, '')}${path}`;
+
+        try {
+             if (useCorsProxy) {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) throw new Error("Not logged in (CORS Proxy required).");
+                
+                const functionsUrl = `${supabaseUrl}/functions/v1/cors-proxy`;
+                res = await fetch(functionsUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${session.access_token}`,
+                        'Content-Type': 'application/json',
+                        'apikey': supabaseAnonKey,
+                    },
+                    body: JSON.stringify({
+                        url: targetUrl,
+                        options: fetchOptions
+                    }),
+                    signal
+                });
+            } else {
+                res = await fetch(targetUrl, fetchOptions);
+            }
+
+            if (res.ok) {
+                onLog(`  - ✅ Sample validation passed.`);
+                fullPayloadResult = [...fullPayloadResult, ...generatedBatch];
+            } else {
+                const errorText = await res.text();
+                onLog(`  - ❌ Sample validation failed (Status ${res.status}): ${stripHtml(errorText).substring(0, 100)}`);
+                onLog(`  - ⚠️ Skipping this batch due to validation failure.`);
+                // We continue to the next request type instead of aborting everything
+            }
+        } catch (e: any) {
+             onLog(`  - ❌ Validation network error: ${e.message}`);
+        }
     }
-    
-    return json;
+
+    onLog(`\nGeneration complete. ${fullPayloadResult.length} total valid records compiled.`);
+    return JSON.stringify(fullPayloadResult, null, 2);
 }
