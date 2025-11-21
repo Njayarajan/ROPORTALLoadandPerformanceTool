@@ -840,19 +840,29 @@ const App: React.FC = () => {
 
     batchUpdateTimerRef.current = window.setInterval(() => {
         if (resultsBatchRef.current.length > 0) {
+            // FIX: Capture and clear synchronously to avoid race conditions with the finally block
+            const batch = [...resultsBatchRef.current];
+            resultsBatchRef.current = []; 
+            
             setResults(prevResults => {
-                const newResults = [...prevResults, ...resultsBatchRef.current];
+                const newResults = [...prevResults, ...batch];
                 if (config.runMode === 'iterations') {
                     const newProgress = Math.min(100, (newResults.length / config.iterations) * 100);
                     setProgress(newProgress);
                 }
-                resultsBatchRef.current = [];
                 return newResults;
             });
         }
+        
         if (resourceSamplesBatchRef.current.length > 0) {
-            setResourceSamples(prevSamples => [...prevSamples, ...resourceSamplesBatchRef.current]);
+            const batch = [...resourceSamplesBatchRef.current];
             resourceSamplesBatchRef.current = [];
+            setResults(prev => {
+                 // Need to use a dummy update to trigger re-render for resource chart? 
+                 // Actually resource chart uses `resourceSamples` state.
+                 return prev; 
+            });
+            setResourceSamples(prevSamples => [...prevSamples, ...batch]);
         }
     }, 500);
 
@@ -875,11 +885,17 @@ const App: React.FC = () => {
         // guaranteeing 100% of results are collected and counted.
         clearTimers();
 
-        setResults(prev => [...prev, ...resultsBatchRef.current]);
+        // Capture remaining results synchronously before clearing refs
+        const finalResultsBatch = [...resultsBatchRef.current];
         resultsBatchRef.current = [];
         
-        setResourceSamples(prev => [...prev, ...resourceSamplesBatchRef.current]);
+        const finalResourceBatch = [...resourceSamplesBatchRef.current];
         resourceSamplesBatchRef.current = [];
+
+        if (finalResultsBatch.length > 0 || finalResourceBatch.length > 0) {
+             setResults(prev => [...prev, ...finalResultsBatch]);
+             setResourceSamples(prev => [...prev, ...finalResourceBatch]);
+        }
 
         if (config.runMode === 'iterations') {
             setProgress(100);

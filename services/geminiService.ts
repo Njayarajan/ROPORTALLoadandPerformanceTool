@@ -147,6 +147,9 @@ async function virtualUserSingleRequest(
       }
     } catch (e) {
       // Body is not valid JSON, so we can't modify it. Continue with the original body.
+      // WARNING: This means the request will be sent with the original static ID from the template.
+      // If the backend requires unique IDs, this request may be treated as a duplicate update or fail validation.
+      console.warn(`[VirtualUser ${requestIndex}] Failed to parse or modify request body for ID injection. Sending original body. This may cause duplicate ID issues.`);
     }
   }
 
