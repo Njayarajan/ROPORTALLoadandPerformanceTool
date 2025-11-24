@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import type { TrendAnalysisReport, TestRunSummary } from '../types';
+import type { TrendAnalysisReport, TestRunSummary, TestStats, LoadTestConfig } from '../types';
 import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon } from './icons';
 import { exportTrendAnalysisAsPdf } from '../services/exportService';
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts';
@@ -18,57 +18,96 @@ const GradingLegend: React.FC = () => {
         <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3 text-xs text-center">
             <div className="bg-green-900/20 border border-green-500/30 p-2 rounded">
                 <strong className="text-green-400 block mb-1">A (90-100)</strong>
-                Excellent Reliability ({'>'}99%) & Stable Latency
+                Near-Perfect Reliability ({'>'}99.5%)
             </div>
             <div className="bg-blue-900/20 border border-blue-500/30 p-2 rounded">
                 <strong className="text-blue-400 block mb-1">B (80-89)</strong>
-                Good Reliability ({'>'}98%) or Minor Variance
+                Excellent Reliability ({'>'}98%)
             </div>
             <div className="bg-yellow-900/20 border border-yellow-500/30 p-2 rounded">
                 <strong className="text-yellow-400 block mb-1">C (70-79)</strong>
-                Fair Reliability ({'>'}95%) or High Latency
+                Good Reliability ({'>'}95%)
             </div>
             <div className="bg-orange-900/20 border border-orange-500/30 p-2 rounded">
                 <strong className="text-orange-400 block mb-1">D (60-69)</strong>
-                Poor Reliability ({'<'}90%) or Degradation
+                Fair Reliability ({'>'}90%)
             </div>
             <div className="bg-red-900/20 border border-red-500/30 p-2 rounded">
                 <strong className="text-red-400 block mb-1">F (0-59)</strong>
-                Critical Failure ({'<'}80%) or Instability
+                Poor Reliability ({'<'}90%)
             </div>
         </div>
     );
 };
 
 const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
-    const errorRate = (Number(run.stats?.totalRequests) || 0) > 0 ? (((Number(run.stats?.errorCount) || 0) / (Number(run.stats?.totalRequests) || 1)) * 100) : 0;
-    const isIterationMode = run.config?.runMode === 'iterations';
+    // Using optional chaining on the run object properties to handle potential nulls
+    // and avoid TypeScript errors with empty object fallbacks.
+    const stats = run.stats as TestStats | undefined;
+    const config = run.config as LoadTestConfig | undefined;
+    
+    const totalRequests = Number(stats?.totalRequests) || 0;
+    const successCount = Number(stats?.successCount) || 0;
+    const successRate = totalRequests > 0 ? (successCount / totalRequests) * 100 : 0;
+    
+    const isIterationMode = config?.runMode === 'iterations';
+    const peakUsers = config?.users || 0;
 
     return (
-        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">
-            {isIterationMode ? (
+        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-4 shadow-sm hover:border-gray-600 transition-colors">
+            
+            {/* Header: Configuration Highlights */}
+            <div className="flex justify-between items-start border-b border-gray-700 pb-3">
                 <div>
-                    <p className="text-lg font-bold text-white">{(Number(run.config?.iterations) || 0).toLocaleString()} <span className="text-sm font-normal text-gray-400">Iterations</span></p>
-                    <p className="text-xs text-gray-400">{run.config?.users ?? 'N/A'} Concurrent Users | {run.config?.pacing ?? 'N/A'}ms Pacing</p>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${config?.loadProfile === 'stair-step' ? 'bg-purple-900 text-purple-200' : 'bg-blue-900 text-blue-200'}`}>
+                        {isIterationMode ? 'Iterations' : (config?.loadProfile === 'stair-step' ? 'Stair Step' : 'Ramp Up')}
+                    </span>
                 </div>
-            ) : (
-                <div>
-                    <p className="text-lg font-bold text-white">{run.config?.users ?? 'N/A'} <span className="text-sm font-normal text-gray-400">Peak Users</span></p>
-                    <p className="text-xs text-gray-400">{run.config?.duration ?? 'N/A'}s Duration</p>
+                <div className="text-right">
+                    <p className="text-xs text-gray-500">{new Date(run.created_at).toLocaleDateString()}</p>
                 </div>
-            )}
-            <div className="grid grid-cols-3 gap-2 text-center">
+            </div>
+
+            {/* Key Metrics Grid */}
+            <div className="grid grid-cols-1 gap-3">
+                <div className="bg-gray-900/30 p-4 rounded border border-gray-700/50">
+                    <p className="text-xs font-bold text-gray-300 uppercase">Peak Concurrent Users</p>
+                    <p className="text-[10px] text-gray-500 mt-1 mb-2 leading-tight">The maximum number of concurrent virtual users active during the test.</p>
+                    <div className="flex items-baseline space-x-1">
+                        <span className="text-3xl font-bold text-white">{peakUsers}</span>
+                        <span className="text-xs text-gray-500">users</span>
+                    </div>
+                </div>
+
+                <div className="bg-gray-900/30 p-4 rounded border border-gray-700/50">
+                    <p className="text-xs font-bold text-gray-300 uppercase">Successful Submissions</p>
+                    <p className="text-[10px] text-gray-500 mt-1 mb-2 leading-tight">The total number of successful requests.</p>
+                    <div className="flex items-baseline justify-between mb-2">
+                        <span className="text-2xl font-bold text-green-400">{successCount.toLocaleString()}</span>
+                        <span className="text-xs text-gray-400">{successRate.toFixed(1)}% of attempts</span>
+                    </div>
+                    <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                        <div 
+                            className={`h-full transition-all duration-500 ${successRate > 99.5 ? 'bg-green-500' : (successRate > 95 ? 'bg-yellow-500' : 'bg-red-500')}`} 
+                            style={{width: `${successRate}%`}} 
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* Secondary Metrics Grid */}
+            <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-700/50">
                 <div>
-                    <p className="text-xs text-gray-400">Avg Latency</p>
-                    <p className="font-mono text-lg font-semibold text-blue-400">{(Number(run.stats?.avgResponseTime) || 0).toFixed(0)}<span className="text-sm">ms</span></p>
+                    <p className="text-[10px] uppercase text-gray-500 font-semibold">Avg Latency</p>
+                    <p className="text-lg font-mono font-semibold text-blue-400">
+                        {(Number(stats?.avgResponseTime) || 0).toFixed(0)}<span className="text-xs text-gray-500 ml-1">ms</span>
+                    </p>
                 </div>
                 <div>
-                    <p className="text-xs text-gray-400">Throughput</p>
-                    <p className="font-mono text-lg font-semibold text-green-400">{(Number(run.stats?.throughput) || 0).toFixed(1)}<span className="text-sm">/s</span></p>
-                </div>
-                <div>
-                    <p className="text-xs text-gray-400">Error Rate</p>
-                    <p className={`font-mono text-lg font-semibold ${errorRate > 5 ? 'text-red-400' : 'text-gray-300'}`}>{errorRate.toFixed(1)}<span className="text-sm">%</span></p>
+                    <p className="text-[10px] uppercase text-gray-500 font-semibold">Throughput</p>
+                    <p className="text-lg font-mono font-semibold text-green-400">
+                        {(Number(stats?.throughput) || 0).toFixed(1)}<span className="text-xs text-gray-500 ml-1">/s</span>
+                    </p>
                 </div>
             </div>
         </div>
@@ -111,7 +150,7 @@ const TrendScoreCard: React.FC<{ report: TrendAnalysisReport }> = ({ report }) =
             </div>
             
             <div className="border-t border-gray-700/50 pt-4">
-                <p className="text-xs text-gray-400 mb-2 uppercase font-semibold tracking-wider">Grading Legend</p>
+                <p className="text-xs text-gray-400 mb-2 uppercase font-semibold tracking-wider">Grading Legend (Reliability Focus)</p>
                 <GradingLegend />
             </div>
         </div>
