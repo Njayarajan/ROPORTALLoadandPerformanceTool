@@ -600,42 +600,6 @@ export const exportTrendAnalysisAsPdf = async (
         y = startY + height;
     };
 
-    const drawTrendRunCard = (run: TestRunSummary, x: number, yPos: number, width: number, height: number) => {
-        doc.setFillColor('white');
-        doc.setDrawColor(theme.colors.border);
-        doc.roundedRect(x, yPos, width, height, 3, 3, 'FD');
-
-        const config: Partial<LoadTestConfig> = run.config || {};
-        const stats = run.stats;
-        if (!stats) return;
-
-        const isIterationMode = config.runMode === 'iterations';
-        
-        doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.textDark);
-        const titleText = isIterationMode ? `${(Number(config.iterations) || 0).toLocaleString()} Iterations` : `${config.users ?? 'N/A'} Peak Users`;
-        doc.text(titleText, x + 5, yPos + 8);
-        
-        doc.setFontSize(theme.fontSizes.small); doc.setTextColor(theme.colors.textLight);
-        const subTitleText = isIterationMode ? `${config.users ?? 'N/A'} users @ ${config.pacing ?? 'N/A'}ms` : `${config.duration ?? 'N/A'}s duration`;
-        doc.text(subTitleText, x + 5, yPos + 13);
-        
-        const statY = yPos + 22;
-        const statWidth = width / 3;
-        const totalRequests = Number(stats.totalRequests) || 0;
-        const errorCount = Number(stats.errorCount) || 0;
-        const errorRate = totalRequests > 0 ? (errorCount / totalRequests) * 100 : 0;
-        
-        doc.setFontSize(theme.fontSizes.small); doc.setTextColor(theme.colors.textLight);
-        doc.text('Avg Latency', x + 5, statY);
-        doc.text('Throughput', x + 5 + statWidth, statY);
-        doc.text('Error Rate', x + 5 + statWidth * 2, statY);
-
-        doc.setFontSize(12); doc.setFont('helvetica', 'bold');
-        doc.setTextColor(theme.colors.latency); doc.text(`${(Number(stats.avgResponseTime) || 0).toFixed(0)}ms`, x + 5, statY + 6);
-        doc.setTextColor(theme.colors.throughput); doc.text(`${(Number(stats.throughput) || 0).toFixed(1)}/s`, x + 5 + statWidth, statY + 6);
-        doc.setTextColor(errorRate > 5 ? theme.colors.error : theme.colors.textDark); doc.text(`${errorRate.toFixed(1)}%`, x + 5 + statWidth * 2, statY + 6);
-    };
-
     const calculateTextBlockHeight = (text: string, options: { isQuote?: boolean, bgColor?: string } = {}): number => {
         const textBlockWidth = CONTENT_WIDTH - (options.isQuote ? 14 : 8);
         const lines = doc.splitTextToSize(text, textBlockWidth);
@@ -644,10 +608,192 @@ export const exportTrendAnalysisAsPdf = async (
         return neededHeight + 5; // bottom margin
     };
 
+    // --- NEW: Score Card Drawing Function ---
+    const drawScoreCard = () => {
+        const cardHeight = 50;
+        // Check page break not strictly needed on page 1, but good practice
+        // We are placing this at fixed y=40 usually
+        
+        doc.setDrawColor(theme.colors.border);
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(theme.margin, y, CONTENT_WIDTH, cardHeight, 3, 3, 'FD');
+
+        const circleX = theme.margin + 20;
+        const circleY = y + 25;
+        const radius = 12;
+        
+        let gradeColor = [107, 114, 128]; // gray
+        if (report.trendGrade === 'A') gradeColor = [22, 163, 74];
+        else if (report.trendGrade === 'B') gradeColor = [37, 99, 235];
+        else if (report.trendGrade === 'C') gradeColor = [234, 179, 8];
+        else gradeColor = [220, 38, 38];
+
+        // Draw Grade Circle
+        doc.setDrawColor(gradeColor[0], gradeColor[1], gradeColor[2]);
+        doc.setLineWidth(1.5);
+        doc.circle(circleX, circleY, radius, 'S');
+        doc.setLineWidth(0.1); // Reset line width
+
+        // Grade Text
+        doc.setFontSize(24);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(gradeColor[0], gradeColor[1], gradeColor[2]);
+        doc.text(report.trendGrade, circleX, circleY + 2.5, { align: 'center' });
+
+        // Info Text
+        const textX = circleX + radius + 15;
+        doc.setFontSize(14);
+        doc.setTextColor(theme.colors.textDark);
+        doc.text('Performance Trend', textX, y + 15);
+        
+        doc.setFontSize(12);
+        doc.setTextColor(gradeColor[0], gradeColor[1], gradeColor[2]);
+        const direction = report.trendDirection;
+        // Simple arrow representation
+        const arrow = direction === 'Improving' ? 'UP' : (direction === 'Degrading' ? 'DOWN' : '-');
+        doc.text(`${direction} (${report.trendScore}/100)`, textX, y + 22);
+
+        // Rationale Box (Right side)
+        const rationaleX = textX + 60; // Offset for rationale
+        const rationaleWidth = CONTENT_WIDTH - (rationaleX - theme.margin) - 5;
+        const rationaleHeight = cardHeight - 10;
+        
+        doc.setFillColor(249, 250, 251); // bg-gray-50
+        doc.roundedRect(rationaleX, y + 5, rationaleWidth, rationaleHeight, 2, 2, 'F');
+        
+        doc.setFontSize(9);
+        doc.setTextColor(theme.colors.textDark);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Rating Rationale:', rationaleX + 4, y + 12);
+        
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(theme.colors.text);
+        const splitRationale = doc.splitTextToSize(report.scoreRationale, rationaleWidth - 8);
+        doc.text(splitRationale, rationaleX + 4, y + 18);
+
+        y += cardHeight + 10;
+
+        // Legend (Small row below)
+        const legendY = y;
+        const legendWidth = CONTENT_WIDTH / 5;
+        const legendHeight = 12;
+        const grades = [
+            { g: 'A', range: '90-100', label: '>99.5%', color: [22, 163, 74] },
+            { g: 'B', range: '80-89', label: '>98%', color: [37, 99, 235] },
+            { g: 'C', range: '70-79', label: '>95%', color: [234, 179, 8] },
+            { g: 'D', range: '60-69', label: '>90%', color: [249, 115, 22] },
+            { g: 'F', range: '0-59', label: '<90%', color: [220, 38, 38] },
+        ];
+
+        grades.forEach((g, i) => {
+            const lx = theme.margin + (i * legendWidth);
+            doc.setFillColor(255, 255, 255);
+            doc.setDrawColor(g.color[0], g.color[1], g.color[2]);
+            doc.roundedRect(lx, legendY, legendWidth - 2, legendHeight, 1, 1, 'FD');
+            
+            doc.setFontSize(8);
+            doc.setTextColor(g.color[0], g.color[1], g.color[2]);
+            doc.setFont('helvetica', 'bold');
+            doc.text(`${g.g}`, lx + 4, legendY + 5);
+            doc.setFont('helvetica', 'normal');
+            doc.text(g.label, lx + 4, legendY + 9);
+        });
+        
+        y += legendHeight + 10;
+    };
+
+    const drawTrendRunCard = (run: TestRunSummary, x: number, yPos: number, width: number, height: number) => {
+        // Card Container
+        doc.setFillColor(255, 255, 255);
+        doc.setDrawColor(theme.colors.border);
+        doc.roundedRect(x, yPos, width, height, 3, 3, 'FD');
+
+        const config: Partial<LoadTestConfig> = run.config || {};
+        const stats = run.stats;
+        if (!stats) return;
+
+        const totalRequests = Number(stats.totalRequests) || 0;
+        const successCount = Number(stats.successCount) || 0;
+        const successRate = totalRequests > 0 ? (successCount / totalRequests) * 100 : 0;
+        const peakUsers = config.users || 0;
+        const isIterationMode = config.runMode === 'iterations';
+
+        // Header: Profile & Date
+        const profileText = isIterationMode ? 'Iterations' : (config.loadProfile === 'stair-step' ? 'Stair Step' : 'Ramp Up');
+        const dateText = new Date(run.created_at).toLocaleDateString();
+
+        doc.setFillColor(243, 244, 246); // bg-gray-100 badge
+        doc.roundedRect(x + 4, yPos + 4, 25, 6, 1, 1, 'F');
+        doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.textLight);
+        doc.text(profileText, x + 16.5, yPos + 8, { align: 'center' });
+
+        doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(theme.colors.textLight);
+        doc.text(dateText, x + width - 4, yPos + 8, { align: 'right' });
+
+        // Section 1: Peak Users Box
+        const boxHeight = 18;
+        let currentY = yPos + 14;
+        
+        doc.setFillColor(249, 250, 251); // bg-gray-50
+        doc.setDrawColor(229, 231, 235); // border-gray-200
+        doc.roundedRect(x + 4, currentY, width - 8, boxHeight, 1, 1, 'FD');
+        
+        doc.setFontSize(7); doc.setTextColor(theme.colors.textLight);
+        doc.text('PEAK CONCURRENT USERS', x + 8, currentY + 5);
+        
+        doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.textDark);
+        doc.text(peakUsers.toString(), x + 8, currentY + 14);
+        doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(theme.colors.textLight);
+        const usersLabelWidth = doc.getStringUnitWidth(peakUsers.toString()) * 14 * 0.3527;
+        doc.text('users', x + 8 + usersLabelWidth + 2, currentY + 14);
+
+        // Section 2: Successful Submissions Box
+        currentY += boxHeight + 4;
+        doc.setFillColor(249, 250, 251); // bg-gray-50
+        doc.setDrawColor(229, 231, 235); // border-gray-200
+        doc.roundedRect(x + 4, currentY, width - 8, boxHeight + 6, 1, 1, 'FD');
+
+        doc.setFontSize(7); doc.setTextColor(theme.colors.textLight);
+        doc.text('SUCCESSFUL SUBMISSIONS', x + 8, currentY + 5);
+
+        doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(22, 163, 74); // Green
+        doc.text(successCount.toLocaleString(), x + 8, currentY + 14);
+        
+        // Progress Bar Background
+        const barY = currentY + 18;
+        const barWidth = width - 16;
+        doc.setFillColor(229, 231, 235); // gray-200
+        doc.rect(x + 8, barY, barWidth, 2, 'F');
+        
+        // Progress Bar Fill
+        const fillWidth = (barWidth * successRate) / 100;
+        if (successRate > 99.5) doc.setFillColor(22, 163, 74);
+        else if (successRate > 95) doc.setFillColor(234, 179, 8);
+        else doc.setFillColor(220, 38, 38);
+        doc.rect(x + 8, barY, fillWidth, 2, 'F');
+
+        // Footer: Latency & Throughput
+        currentY += boxHeight + 6 + 4;
+        doc.setDrawColor(229, 231, 235);
+        doc.line(x + 4, currentY, x + width - 4, currentY);
+        currentY += 5;
+
+        doc.setFontSize(7); doc.setTextColor(theme.colors.textLight);
+        doc.text('AVG LATENCY', x + 8, currentY);
+        doc.text('THROUGHPUT', x + width / 2 + 4, currentY);
+
+        currentY += 5;
+        doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.latency);
+        doc.text(`${(Number(stats.avgResponseTime) || 0).toFixed(0)}ms`, x + 8, currentY);
+        
+        doc.setTextColor(theme.colors.throughput);
+        doc.text(`${(Number(stats.throughput) || 0).toFixed(1)}/s`, x + width / 2 + 4, currentY);
+    };
+
 
     // --- PDF GENERATION START ---
     
-    y = 60;
+    y = 40; // Start a bit lower
     doc.setFontSize(theme.fontSizes.title); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.textDark);
     doc.text('Multi-Test Trend Analysis', PAGE_WIDTH / 2, y, { align: 'center' });
     y += 10;
@@ -657,6 +803,12 @@ export const exportTrendAnalysisAsPdf = async (
     doc.setFontSize(theme.fontSizes.small); doc.setTextColor(theme.colors.textLight);
     doc.text(`Report Generated: ${new Date().toLocaleString()}`, PAGE_WIDTH / 2, y, { align: 'center' });
     
+    // Draw Score Card if grade is available
+    if (report.trendGrade) {
+        y += 15;
+        drawScoreCard();
+    }
+
     doc.addPage();
     y = theme.margin;
     
@@ -692,17 +844,23 @@ export const exportTrendAnalysisAsPdf = async (
     drawSectionHeader('Performance Threshold', thresholdHeight);
     drawTextBlock(report.performanceThreshold || 'N/A', { bgColor: theme.colors.warningBg, borderColor: theme.colors.warningBorder, textColor: theme.colors.warningText });
     
-    checkPageBreak(24 + 45); // header + one card
+    // Visual Summary Grid
+    const cardHeight = 85; // Increased height for new design
+    checkPageBreak(24 + cardHeight + 5);
     drawSectionHeader('Visual Summary');
     const cardWidth = (CONTENT_WIDTH - 5) / 2;
-    const cardHeight = 40;
+    
     let cardX = theme.margin;
     for (let i = 0; i < sortedRuns.length; i++) {
         checkPageBreak(cardHeight + 5);
-        let cardY = y;
+        // Reset X for new rows (i even -> left, i odd -> right)
         cardX = (i % 2 === 0) ? theme.margin : theme.margin + cardWidth + 5;
-        drawTrendRunCard(sortedRuns[i], cardX, cardY, cardWidth, cardHeight);
-        if (i % 2 !== 0 || i === sortedRuns.length - 1) { y += cardHeight + 5; }
+        drawTrendRunCard(sortedRuns[i], cardX, y, cardWidth, cardHeight);
+        
+        // Increment Y only after drawing the second card in a row or if it's the last card
+        if (i % 2 !== 0 || i === sortedRuns.length - 1) { 
+            y += cardHeight + 5; 
+        }
     }
     
     doc.addPage();
