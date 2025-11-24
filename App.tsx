@@ -212,7 +212,7 @@ const TokenRefreshModal: React.FC<{
 };
 
 
-const App: React.FC = () => {
+export const App: React.FC = () => {
   // --- State Management ---
   
   // Auth & User State
@@ -1089,10 +1089,11 @@ const App: React.FC = () => {
               keyObservations: [],
               rootCauseSuggestion: e instanceof Error ? e.message : 'An unknown error occurred.',
               recommendations: [],
-              trendDirection: 'Inconclusive', // Added
-              trendScore: 0, // Added
-              trendGrade: 'F', // Added
-              scoreRationale: 'Analysis failed due to an error.', // Added
+              trendDirection: 'Inconclusive', 
+              trendScore: 0, 
+              trendGrade: 'F', 
+              scoreRationale: 'Analysis failed due to an error.', 
+              conclusiveSummary: 'Report generation failed.',
           });
       } finally {
           setIsGeneratingTrendAnalysis(false);
@@ -1377,6 +1378,7 @@ const App: React.FC = () => {
           isLoading={isGeneratingTrendAnalysis}
           report={trendAnalysisReport}
           runs={trendAnalysisRuns}
+          onUpdateReport={(newReport) => setTrendAnalysisReport(newReport)}
        />
       <UrlManagerModal 
         isOpen={isUrlManagerOpen}
@@ -1402,5 +1404,3 @@ const App: React.FC = () => {
     </div>
   );
 };
-
-export default App;

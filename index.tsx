@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
+import { App } from './App';
 import { AuthProvider } from './auth/AuthContext';
 import { DebugProvider } from './components/DebugContext';
 import ErrorBoundary from './components/ErrorBoundary';

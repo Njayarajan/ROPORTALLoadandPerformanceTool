@@ -578,7 +578,7 @@ export async function getAnalysis(config: LoadTestConfig, stats: TestStats): Pro
               type: Type.OBJECT,
               description: "Structured summary for the performance timeline.",
               properties: {
-                analysis: { type: Type.STRING, description: "An analysis of the relationship between load, latency, and errors over time." },
+                analysis: { type: Type.STRING, description: "An analysis of the relationship between user load, latency, and errors over time." },
                 suggestion: { type: Type.STRING, description: "An actionable suggestion based on the timeline analysis." }
               },
               required: ["analysis", "suggestion"]
@@ -736,6 +736,32 @@ function calculateDeterministicGrade(successRate: number): { grade: 'A' | 'B' | 
     return { grade: 'F', score: 50 };
 }
 
+const trendAnalysisSchema = {
+  type: Type.OBJECT,
+  properties: {
+    analyzedRunsCount: { type: Type.INTEGER, description: "The number of test runs being analyzed." },
+    trendDirection: { type: Type.STRING, enum: ['Improving', 'Degrading', 'Stable', 'Inconclusive'], description: "The overall direction of performance based on chronological comparison." },
+    trendScore: { type: Type.INTEGER, description: "A score from 0 to 100 indicating the health of the trend." },
+    trendGrade: { type: Type.STRING, enum: ['A', 'B', 'C', 'D', 'F'], description: "A letter grade corresponding to the score." },
+    scoreRationale: { type: Type.STRING, description: "A short explanation (1-2 sentences) justifying the score and grade." },
+    overallTrendSummary: { type: Type.STRING, description: "A high-level, non-technical summary of the performance trend." },
+    performanceThreshold: { type: Type.STRING, description: "A clear statement identifying the user load where performance began to significantly degrade." },
+    keyObservations: {
+      type: Type.ARRAY,
+      description: "A list of simple text strings, each describing a specific observation from the data.",
+      items: { type: Type.STRING }
+    },
+    rootCauseSuggestion: { type: Type.STRING, description: "A technical hypothesis for the performance degradation or improvement." },
+    recommendations: {
+      type: Type.ARRAY,
+      description: "A list of actionable recommendations.",
+      items: { type: Type.STRING }
+    },
+    conclusiveSummary: { type: Type.STRING, description: "A detailed, concluding paragraph summarizing the overall health and scalability of the system based on these tests." }
+  },
+  required: ['analyzedRunsCount', 'trendDirection', 'trendScore', 'trendGrade', 'scoreRationale', 'overallTrendSummary', 'performanceThreshold', 'keyObservations', 'rootCauseSuggestion', 'recommendations', 'conclusiveSummary']
+};
+
 export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAnalysisReport> {
   let jsonText = '';
   try {
@@ -746,6 +772,10 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
     // Sort runs chronologically (oldest to newest) to detect improvement properly.
     const sortedRuns = [...runs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     
+    // Calculate grand totals to demonstrate scale
+    const grandTotalRequests = sortedRuns.reduce((acc, run) => acc + (Number(run.stats?.totalRequests) || 0), 0);
+    const grandTotalSuccess = sortedRuns.reduce((acc, run) => acc + (Number(run.stats?.successCount) || 0), 0);
+
     // Calculate deterministic metrics for the LATEST run
     const latestRun = sortedRuns[sortedRuns.length - 1];
     const latestStats: Partial<TestStats> = latestRun?.stats || {};
@@ -811,6 +841,10 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
       (Each line represents a different test run with its configuration and key results)
       ${summaryData}
 
+      **Aggregate Statistics:**
+      - Grand Total Requests Processed: ${grandTotalRequests.toLocaleString()}
+      - Grand Total Successful Submissions: ${grandTotalSuccess.toLocaleString()}
+
       **Analysis Guidelines:**
       - Compare the *latest* runs against the *earlier* runs to determine the trend.
       
@@ -839,7 +873,7 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
         - **60-69 (D - Poor):** Success Rate > 90%.
         - **0-59 (F - Critical):** Success Rate < 90%.
       
-      **CRITICAL REQUIREMENT:** The 'conclusiveSummary' field is the most important part of this report. It MUST explicitly mention the magnitude of the tests (e.g., "The tests ran for X seconds with Y concurrent users resulting in over Z successful submissions") to give the reader a clear idea of the short-burst load intensity.
+      **CRITICAL REQUIREMENT:** The 'conclusiveSummary' field is the most important part of this report. It MUST explicitly state the **Grand Total Successful Submissions (${grandTotalSuccess.toLocaleString()})** out of **${grandTotalRequests.toLocaleString()} total requests** across these runs. Use this data to emphasize the sheer volume or "mass amounts" of traffic handled by the system, validating its robustness at scale.
 
       - **You MUST generate a value for every field defined in the JSON schema.** Do not omit any fields. All fields must be populated with non-empty, meaningful values.
 
@@ -852,31 +886,7 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
       config: {
         systemInstruction,
         responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            analyzedRunsCount: { type: Type.INTEGER, description: "The number of test runs being analyzed." },
-            trendDirection: { type: Type.STRING, enum: ['Improving', 'Degrading', 'Stable', 'Inconclusive'], description: "The overall direction of performance based on chronological comparison." },
-            trendScore: { type: Type.INTEGER, description: "A score from 0 to 100 indicating the health of the trend." },
-            trendGrade: { type: Type.STRING, enum: ['A', 'B', 'C', 'D', 'F'], description: "A letter grade corresponding to the score." },
-            scoreRationale: { type: Type.STRING, description: "A short explanation (1-2 sentences) justifying the score and grade." },
-            overallTrendSummary: { type: Type.STRING, description: "A high-level, non-technical summary of the performance trend." },
-            performanceThreshold: { type: Type.STRING, description: "A clear statement identifying the user load where performance began to significantly degrade." },
-            keyObservations: {
-              type: Type.ARRAY,
-              description: "A list of simple text strings, each describing a specific observation from the data.",
-              items: { type: Type.STRING }
-            },
-            rootCauseSuggestion: { type: Type.STRING, description: "A technical hypothesis for the performance degradation or improvement." },
-            recommendations: {
-              type: Type.ARRAY,
-              description: "A list of actionable recommendations.",
-              items: { type: Type.STRING }
-            },
-            conclusiveSummary: { type: Type.STRING, description: "A detailed, concluding paragraph summarizing the overall health and scalability of the system based on these tests." }
-          },
-          required: ['analyzedRunsCount', 'trendDirection', 'trendScore', 'trendGrade', 'scoreRationale', 'overallTrendSummary', 'performanceThreshold', 'keyObservations', 'rootCauseSuggestion', 'recommendations', 'conclusiveSummary']
-        }
+        responseSchema: trendAnalysisSchema
       }
     });
     
@@ -905,6 +915,71 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
       }
       throw new Error(`An unexpected error occurred while generating the trend analysis: ${e.message || e.toString()}`);
   }
+}
+
+/**
+ * Refines an existing trend analysis report based on user instructions.
+ */
+export async function refineTrendAnalysis(
+    currentReport: TrendAnalysisReport, 
+    userInstruction: string,
+    runs: TestRunSummary[]
+): Promise<TrendAnalysisReport> {
+    let jsonText = '';
+    try {
+        const client = getAiClient();
+        const systemInstruction = `You are a senior Site Reliability Engineer (SRE). You are refining an existing Performance Trend Report based on specific user feedback. Maintain the original data accuracy but adjust the tone, focus, or content as requested.`;
+
+        const summaryData = runs.map((run, index) => {
+             const stats: Partial<TestStats> = run.stats || {};
+             const totalRequests = Number(stats.totalRequests) || 0;
+             const errorCount = Number(stats.errorCount) || 0;
+             const successCount = Number(stats.successCount) || 0;
+             return `Run ${index+1}: ${totalRequests} reqs, ${successCount} success, ${errorCount} errors. Avg Latency: ${Number(stats.avgResponseTime).toFixed(0)}ms.`;
+        }).join('\n');
+
+        const userPrompt = `
+        **Context:**
+        I have an existing Trend Analysis Report for ${runs.length} test runs.
+        
+        **Underlying Test Data (Reference):**
+        ${summaryData}
+
+        **Current Report (JSON):**
+        ${JSON.stringify(currentReport, null, 2)}
+
+        **User Instruction for Refinement:**
+        "${userInstruction}"
+
+        **Task:**
+        Update the JSON report to reflect the user's instruction.
+        - If the user asks to change the tone, rewrite the summaries.
+        - If the user asks to emphasize specific metrics (like total submissions), ensure they are prominent in the 'conclusiveSummary'.
+        - DO NOT invent false data.
+        - Keep the 'trendGrade', 'trendScore', and 'analyzedRunsCount' unchanged unless the user explicitly argues they are wrong based on the data.
+        
+        **Output:**
+        Return the full, valid JSON object adhering to the original schema.
+        `;
+
+        const response = await client.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: userPrompt,
+            config: {
+                systemInstruction,
+                responseMimeType: "application/json",
+                responseSchema: trendAnalysisSchema
+            }
+        });
+
+        jsonText = response.text.trim();
+        jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+        return JSON.parse(jsonText) as TrendAnalysisReport;
+
+    } catch (e: any) {
+        console.error("Error during refineTrendAnalysis:", e);
+        throw new Error(`Failed to refine report: ${e.message || e.toString()}`);
+    }
 }
 
 export async function getComparisonAnalysis(runA: TestRun, runB: TestRun): Promise<ComparisonAnalysisReport> {

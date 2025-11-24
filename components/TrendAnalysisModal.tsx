@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import type { TrendAnalysisReport, TestRunSummary, TestStats, LoadTestConfig } from '../types';
-import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon } from './icons';
+import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon, SparklesIcon } from './icons';
 import { exportTrendAnalysisAsPdf } from '../services/exportService';
+import { refineTrendAnalysis } from '../services/geminiService';
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts';
 
 interface TrendAnalysisModalProps {
@@ -10,6 +11,7 @@ interface TrendAnalysisModalProps {
     report: TrendAnalysisReport | null;
     isLoading: boolean;
     runs: TestRunSummary[];
+    onUpdateReport?: (newReport: TrendAnalysisReport) => void;
 }
 
 const GradingLegend: React.FC = () => {
@@ -215,8 +217,53 @@ const TrendChart: React.FC<{ runs: TestRunSummary[] }> = ({ runs }) => {
     );
 };
 
-const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose, report, isLoading, runs }) => {
+const RefineDialog: React.FC<{
+    onClose: () => void;
+    onRefine: (instruction: string) => void;
+    isRefining: boolean;
+}> = ({ onClose, onRefine, isRefining }) => {
+    const [instruction, setInstruction] = useState('');
+
+    return (
+        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
+            <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+                <h3 className="text-lg font-bold text-white mb-2 flex items-center">
+                    <SparklesIcon className="w-5 h-5 mr-2 text-blue-400" />
+                    Refine Report with AI
+                </h3>
+                <p className="text-sm text-gray-400 mb-4">
+                    Tell the AI how you want to change the report. It will re-analyze the data with your instructions.
+                </p>
+                <textarea
+                    className="w-full bg-gray-800 border border-gray-600 rounded-md p-3 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none mb-4 resize-none"
+                    rows={4}
+                    placeholder="e.g., 'Make the tone more professional', 'Focus on the high error rate in run 3', 'Shorten the summary'."
+                    value={instruction}
+                    onChange={(e) => setInstruction(e.target.value)}
+                    disabled={isRefining}
+                />
+                <div className="flex justify-end gap-2">
+                    <button onClick={onClose} disabled={isRefining} className="px-3 py-2 text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-800 rounded-md transition">
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={() => onRefine(instruction)} 
+                        disabled={isRefining || !instruction.trim()} 
+                        className="flex items-center justify-center px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md transition disabled:opacity-50"
+                    >
+                        {isRefining ? <SpinnerIcon className="w-4 h-4 animate-spin mr-2" /> : <SparklesIcon className="w-4 h-4 mr-2" />}
+                        {isRefining ? 'Refining...' : 'Update Report'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose, report, isLoading, runs, onUpdateReport }) => {
     const [isExporting, setIsExporting] = useState(false);
+    const [isRefineOpen, setIsRefineOpen] = useState(false);
+    const [isRefining, setIsRefining] = useState(false);
 
     const handleExport = async () => {
         if (!report || !runs) return;
@@ -229,6 +276,23 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
             alert(`Failed to generate PDF: ${e instanceof Error ? e.message : 'Unknown error'}`);
         } finally {
             setIsExporting(false);
+        }
+    };
+
+    const handleRefine = async (instruction: string) => {
+        if (!report) return;
+        setIsRefining(true);
+        try {
+            const updatedReport = await refineTrendAnalysis(report, instruction, runs);
+            if (onUpdateReport) {
+                onUpdateReport(updatedReport);
+            }
+            setIsRefineOpen(false);
+        } catch (e) {
+            console.error("Failed to refine report:", e);
+            alert(`Failed to refine report: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        } finally {
+            setIsRefining(false);
         }
     };
     
@@ -247,9 +311,20 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                             Multi-Test Trend Analysis {report && !isLoading ? `(${report.analyzedRunsCount} Runs)` : ''}
                         </h2>
                     </div>
-                    <button onClick={onClose} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-colors">
-                        <XMarkIcon className="w-6 h-6" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        {report && !isLoading && (
+                            <button 
+                                onClick={() => setIsRefineOpen(true)} 
+                                className="flex items-center space-x-2 px-3 py-1.5 text-xs font-medium bg-blue-900/30 hover:bg-blue-800/50 text-blue-300 border border-blue-500/30 rounded-md transition"
+                            >
+                                <SparklesIcon className="w-4 h-4" />
+                                <span>Edit with AI</span>
+                            </button>
+                        )}
+                        <button onClick={onClose} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-colors">
+                            <XMarkIcon className="w-6 h-6" />
+                        </button>
+                    </div>
                 </header>
 
                 <div className="overflow-y-auto p-6 space-y-8">
@@ -414,6 +489,13 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                     </button>
                 </footer>
             </div>
+            {isRefineOpen && (
+                <RefineDialog 
+                    onClose={() => setIsRefineOpen(false)} 
+                    onRefine={handleRefine} 
+                    isRefining={isRefining} 
+                />
+            )}
         </div>
     );
 };
