@@ -1,10 +1,3 @@
-
-
-
-
-
-
-
 export class AutoFixStoppedError extends Error {
     constructor(message: string, public lastPayload: string | null) {
         super(message);
@@ -191,6 +184,11 @@ export interface TrendAnalysisReport {
     recommendations?: string[];
     analyzedRunsCount: number;
     conclusiveSummary?: string;
+    // Enhanced Grading Fields
+    trendDirection: 'Improving' | 'Degrading' | 'Stable' | 'Inconclusive';
+    trendScore: number; // 0 to 100
+    trendGrade: 'A' | 'B' | 'C' | 'D' | 'F';
+    scoreRationale: string;
 }
 
 export interface ComparisonMetricChange {

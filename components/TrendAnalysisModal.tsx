@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+
+import React, { useState, useMemo } from 'react';
 import type { TrendAnalysisReport, TestRunSummary } from '../types';
-import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon } from './icons';
+import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon } from './icons';
 import { exportTrendAnalysisAsPdf } from '../services/exportService';
+import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts';
 
 interface TrendAnalysisModalProps {
     isOpen: boolean;
@@ -10,6 +12,33 @@ interface TrendAnalysisModalProps {
     isLoading: boolean;
     runs: TestRunSummary[];
 }
+
+const GradingLegend: React.FC = () => {
+    return (
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3 text-xs text-center">
+            <div className="bg-green-900/20 border border-green-500/30 p-2 rounded">
+                <strong className="text-green-400 block mb-1">A (90-100)</strong>
+                Excellent Reliability ({'>'}99%) & Stable Latency
+            </div>
+            <div className="bg-blue-900/20 border border-blue-500/30 p-2 rounded">
+                <strong className="text-blue-400 block mb-1">B (80-89)</strong>
+                Good Reliability ({'>'}98%) or Minor Variance
+            </div>
+            <div className="bg-yellow-900/20 border border-yellow-500/30 p-2 rounded">
+                <strong className="text-yellow-400 block mb-1">C (70-79)</strong>
+                Fair Reliability ({'>'}95%) or High Latency
+            </div>
+            <div className="bg-orange-900/20 border border-orange-500/30 p-2 rounded">
+                <strong className="text-orange-400 block mb-1">D (60-69)</strong>
+                Poor Reliability ({'<'}90%) or Degradation
+            </div>
+            <div className="bg-red-900/20 border border-red-500/30 p-2 rounded">
+                <strong className="text-red-400 block mb-1">F (0-59)</strong>
+                Critical Failure ({'<'}80%) or Instability
+            </div>
+        </div>
+    );
+};
 
 const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
     const errorRate = (Number(run.stats?.totalRequests) || 0) > 0 ? (((Number(run.stats?.errorCount) || 0) / (Number(run.stats?.totalRequests) || 1)) * 100) : 0;
@@ -46,6 +75,92 @@ const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
     );
 };
 
+const TrendScoreCard: React.FC<{ report: TrendAnalysisReport }> = ({ report }) => {
+    const { trendGrade, trendScore, trendDirection, scoreRationale } = report;
+    
+    let colorClass = 'text-gray-400';
+    let bgClass = 'bg-gray-800';
+    let borderClass = 'border-gray-700';
+
+    if (trendGrade === 'A') { colorClass = 'text-green-400'; bgClass = 'bg-green-900/20'; borderClass = 'border-green-500/50'; }
+    else if (trendGrade === 'B') { colorClass = 'text-blue-400'; bgClass = 'bg-blue-900/20'; borderClass = 'border-blue-500/50'; }
+    else if (trendGrade === 'C') { colorClass = 'text-yellow-400'; bgClass = 'bg-yellow-900/20'; borderClass = 'border-yellow-500/50'; }
+    else { colorClass = 'text-red-400'; bgClass = 'bg-red-900/20'; borderClass = 'border-red-500/50'; }
+
+    const directionIcon = trendDirection === 'Improving' ? '↗' : trendDirection === 'Degrading' ? '↘' : '→';
+
+    return (
+        <div className={`p-6 rounded-lg border ${borderClass} ${bgClass} flex flex-col gap-6`}>
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                <div className="flex items-center gap-4">
+                    <div className={`w-20 h-20 rounded-full border-4 ${borderClass.replace('/50','')} flex items-center justify-center bg-gray-900/50`}>
+                        <span className={`text-4xl font-bold ${colorClass}`}>{trendGrade}</span>
+                    </div>
+                    <div>
+                        <h3 className="text-lg font-semibold text-white">Performance Trend</h3>
+                        <div className={`text-2xl font-bold ${colorClass} flex items-center gap-2`}>
+                            {trendDirection} <span className="text-3xl">{directionIcon}</span>
+                        </div>
+                        <p className="text-sm text-gray-400 mt-1">Score: {trendScore}/100</p>
+                    </div>
+                </div>
+                <div className="flex-grow bg-gray-900/50 p-4 rounded-lg border border-gray-700/50 text-sm text-gray-300 w-full md:w-auto">
+                    <strong className="text-white block mb-1">Rating Rationale:</strong>
+                    {scoreRationale}
+                </div>
+            </div>
+            
+            <div className="border-t border-gray-700/50 pt-4">
+                <p className="text-xs text-gray-400 mb-2 uppercase font-semibold tracking-wider">Grading Legend</p>
+                <GradingLegend />
+            </div>
+        </div>
+    );
+};
+
+const TrendChart: React.FC<{ runs: TestRunSummary[] }> = ({ runs }) => {
+    const sortedRuns = useMemo(() => {
+        return [...runs]
+            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+            .map((run, index) => ({
+                name: `Run ${index + 1}`,
+                date: new Date(run.created_at).toLocaleString(),
+                avgLatency: Math.round(Number(run.stats?.avgResponseTime) || 0),
+                throughput: Number((Number(run.stats?.throughput) || 0).toFixed(2)),
+            }));
+    }, [runs]);
+
+    return (
+        <div className="bg-gray-900 rounded-lg border border-gray-700 p-4">
+            <h4 className="text-sm font-semibold text-white mb-4 flex items-center">
+                <ChartBarSquareIcon className="w-5 h-5 mr-2 text-blue-400"/>
+                Metric Progression (Chronological)
+            </h4>
+            <div style={{ width: '100%', height: 300 }}>
+                <ResponsiveContainer>
+                    <ComposedChart data={sortedRuns} margin={{ top: 20, right: 20, left: 0, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <XAxis dataKey="name" stroke="#9ca3af" fontSize={12} tick={{ fill: '#9ca3af' }} />
+                        <YAxis yAxisId="left" orientation="left" stroke="#3b82f6" label={{ value: 'Latency (ms)', angle: -90, position: 'insideLeft', fill: '#3b82f6' }} />
+                        <YAxis yAxisId="right" orientation="right" stroke="#10b981" label={{ value: 'Throughput (req/s)', angle: 90, position: 'insideRight', fill: '#10b981' }} />
+                        <Tooltip 
+                            contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151' }}
+                            labelStyle={{ color: '#fff' }}
+                            labelFormatter={(label, payload) => payload[0]?.payload.date || label}
+                        />
+                        <Legend verticalAlign="top" height={36}/>
+                        <Line yAxisId="left" type="monotone" dataKey="avgLatency" name="Avg Latency" stroke="#3b82f6" strokeWidth={3} dot={{r: 4}}>
+                            <LabelList dataKey="avgLatency" position="top" fill="#93c5fd" fontSize={10} formatter={(val: number) => `${val}ms`} />
+                        </Line>
+                        <Line yAxisId="right" type="monotone" dataKey="throughput" name="Throughput" stroke="#10b981" strokeWidth={3} dot={{r: 4}}>
+                            <LabelList dataKey="throughput" position="bottom" fill="#86efac" fontSize={10} formatter={(val: number) => `${val}/s`} />
+                        </Line>
+                    </ComposedChart>
+                </ResponsiveContainer>
+            </div>
+        </div>
+    );
+};
 
 const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose, report, isLoading, runs }) => {
     const [isExporting, setIsExporting] = useState(false);
@@ -68,7 +183,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
     return (
         <div className="fixed inset-0 bg-gray-950/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
             <div
-                className="bg-gray-900 w-full max-w-4xl rounded-xl border border-gray-700 shadow-2xl flex flex-col max-h-[90vh]"
+                className="bg-gray-900 w-full max-w-5xl rounded-xl border border-gray-700 shadow-2xl flex flex-col max-h-[95vh]"
                 onClick={(e) => e.stopPropagation()}
             >
                 <header className="flex items-center justify-between p-4 border-b border-gray-700 flex-shrink-0">
@@ -98,7 +213,15 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                         </div>
                     ) : (
                         <>
-                            {/* Executive Summary */}
+                            {/* 1. Scorecard */}
+                            {(report.trendGrade || report.trendDirection) && (
+                                <TrendScoreCard report={report} />
+                            )}
+
+                            {/* 2. Visual Chart */}
+                            <TrendChart runs={runs} />
+
+                            {/* 3. Executive Summary */}
                             <div className="space-y-3">
                                 <h4 className="text-lg font-semibold text-white flex items-center"><MagnifyingGlassIcon className="w-5 h-5 mr-2 text-blue-400"/>Overall Trend Summary</h4>
                                 <blockquote className="border-l-4 border-blue-500 pl-4 py-2 bg-gray-800/50 rounded-r-lg">
@@ -106,15 +229,15 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                                 </blockquote>
                             </div>
 
-                             {/* Performance Threshold */}
+                             {/* 4. Performance Threshold */}
                             <div className="p-4 bg-yellow-900/20 border border-yellow-500/30 rounded-lg">
                                 <h4 className="text-lg font-semibold text-yellow-300 flex items-center"><ExclamationTriangleIcon className="w-5 h-5 mr-2"/>Performance Threshold</h4>
                                 <p className="text-yellow-200 mt-2">{report.performanceThreshold || 'Analysis failed to determine a performance threshold.'}</p>
                             </div>
 
-                            {/* Visual Grid Summary */}
+                            {/* 5. Visual Grid Summary */}
                             <div className="space-y-3">
-                                <h4 className="text-lg font-semibold text-white">Visual Summary</h4>
+                                <h4 className="text-lg font-semibold text-white">Run-by-Run Snapshot</h4>
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                     {runs.sort((a, b) => (Number(a.config?.users) || 0) - (Number(b.config?.users) || 0)).map(run => (
                                         <TrendRunCard key={run.id} run={run} />
@@ -122,7 +245,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                                 </div>
                             </div>
 
-                            {/* Key Observations */}
+                            {/* 6. Key Observations */}
                             <div className="space-y-3">
                                 <h4 className="text-lg font-semibold text-white flex items-center"><MagnifyingGlassIcon className="w-5 h-5 mr-2 text-blue-400"/>Key Observations</h4>
                                 {report.keyObservations && report.keyObservations.length > 0 ? (
@@ -136,7 +259,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                                 )}
                             </div>
 
-                            {/* Root Cause & Recommendations */}
+                            {/* 7. Root Cause & Recommendations */}
                              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 <div className="space-y-3 p-4 bg-gray-800/50 rounded-lg">
                                     <h4 className="text-lg font-semibold text-white flex items-center"><WrenchIcon className="w-5 h-5 mr-2 text-blue-400"/>Suggested Root Cause</h4>
@@ -156,7 +279,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                                 </div>
                             </div>
 
-                            {/* Conclusive Summary */}
+                            {/* 8. Conclusive Summary */}
                             {report.conclusiveSummary && (
                                 <div className="space-y-3 pt-8 border-t border-gray-700">
                                     <h4 className="text-lg font-semibold text-white flex items-center"><MagnifyingGlassIcon className="w-5 h-5 mr-2 text-indigo-400"/>Conclusive Summary</h4>
@@ -166,7 +289,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                                 </div>
                             )}
 
-                            {/* Data Summary Table */}
+                            {/* 9. Data Summary Table */}
                             <div className="space-y-3 pt-8 border-t border-gray-700">
                                 <h4 className="text-lg font-semibold text-white">Analyzed Test Runs Data</h4>
                                 <div className="overflow-x-auto">

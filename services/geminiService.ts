@@ -1,3 +1,4 @@
+
 // ===================================================================================
 //
 //   !!! CRITICAL SECURITY WARNING !!!
@@ -750,9 +751,11 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
 
     const systemInstruction = `You are a senior Site Reliability Engineer (SRE) specializing in performance trend analysis. Your job is to analyze a series of load test results and produce a report for both managers and developers. Your output must be a structured JSON object. You MUST provide a value for every field in the schema. No field, especially 'conclusiveSummary', should ever be an empty string.`;
     
-    const sortedRuns = [...runs].sort((a, b) => (Number(a.config?.users) || 0) - (Number(b.config?.users) || 0));
+    // Sort runs chronologically (oldest to newest) to detect improvement properly.
+    // Note: The original runs array might be sorted differently (e.g., newest first), so we force a chronological sort here.
+    const sortedRuns = [...runs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     
-    const summaryData = sortedRuns.map(run => {
+    const summaryData = sortedRuns.map((run, index) => {
         // FIX: Defensively access properties on the stats object, coercing them to numbers.
         // This prevents crashes from .toFixed() if a property is missing, null, or a non-numeric string.
         const stats: Partial<TestStats> = run.stats || {};
@@ -763,7 +766,7 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
         const throughput = Number(stats.throughput) || 0;
 
         if (totalRequests === 0 && avgResponseTime === 0) {
-            return `- Test [${run.title || 'Untitled'}]: Data is corrupted or missing stats.`;
+            return `Run ${index + 1} [${run.title || 'Untitled'}]: Data is corrupted or missing stats.`;
         }
 
         const errorRate = totalRequests > 0 ? (errorCount / totalRequests) * 100 : 0;
@@ -782,19 +785,25 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
             runContext = `${users} Peak Users, ${duration}s Duration`;
         }
 
-        return `- Test [${runContext}]: Avg Latency=${avgResponseTime.toFixed(0)}ms, Max Latency=${maxResponseTime.toFixed(0)}ms, Error Rate=${errorRate.toFixed(1)}%, Throughput=${throughput.toFixed(1)} req/s`;
+        return `Run ${index + 1} [Date: ${new Date(run.created_at).toLocaleString()}] [${runContext}]: Avg Latency=${avgResponseTime.toFixed(0)}ms, Max Latency=${maxResponseTime.toFixed(0)}ms, Error Rate=${errorRate.toFixed(1)}%, Throughput=${throughput.toFixed(1)} req/s`;
     }).join('\n');
 
     const userPrompt = `
-      Analyze the following series of ${runs.length} load test results, sorted by increasing user load. Your response must be a JSON object that adheres to the provided schema.
+      Analyze the following series of ${runs.length} load test results, sorted chronologically from oldest (Run 1) to newest. Your response must be a JSON object that adheres to the provided schema.
 
       **Test Run Data:**
       (Each line represents a different test run with its configuration and key results)
       ${summaryData}
 
       **Analysis Guidelines:**
-      - Provide a high-level summary, identify the performance "breaking point", suggest a technical root cause, and provide actionable recommendations.
-      - Generate a simple array of strings for "keyObservations". Each string should be a specific, data-backed observation.
+      - Compare the *latest* runs against the *earlier* runs to determine the trend.
+      - **Improvement Logic:** Reliability (Success Rate) is the primary factor. If error rates are dropping or near 0% (99-100% Success), this is the most important positive signal. Latency improvement is secondary.
+      - **Grading Rubric (trendScore 0-100):**
+        - **90-100 (A - Excellent):** High reliability (>99% success rate) AND stable or improving latency. Minor latency fluctuations are acceptable if reliability is perfect.
+        - **80-89 (B - Good):** Good reliability (>98% success rate) with some latency variance, or slight improvement in a difficult scenario.
+        - **70-79 (C - Fair):** Acceptable reliability (>95%) but noticeable latency degradation or stagnation.
+        - **60-69 (D - Poor):** Low reliability (<90% success) or severe latency degradation.
+        - **0-59 (F - Critical):** Critical failure rates (<80% success) or complete system instability.
       
       **CRITICAL REQUIREMENT:** The 'conclusiveSummary' field is the most important part of this report. It MUST be a detailed, insightful paragraph synthesizing all findings, discussing the business and infrastructure impact. It cannot be null, empty, or a short, unhelpful sentence. Failure to provide a comprehensive conclusive summary will result in rejection.
 
@@ -813,6 +822,10 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
           type: Type.OBJECT,
           properties: {
             analyzedRunsCount: { type: Type.INTEGER, description: "The number of test runs being analyzed." },
+            trendDirection: { type: Type.STRING, enum: ['Improving', 'Degrading', 'Stable', 'Inconclusive'], description: "The overall direction of performance based on chronological comparison." },
+            trendScore: { type: Type.INTEGER, description: "A score from 0 to 100 indicating the health of the trend." },
+            trendGrade: { type: Type.STRING, enum: ['A', 'B', 'C', 'D', 'F'], description: "A letter grade corresponding to the score." },
+            scoreRationale: { type: Type.STRING, description: "A short explanation (1-2 sentences) justifying the score and grade." },
             overallTrendSummary: { type: Type.STRING, description: "A high-level, non-technical summary of the performance trend." },
             performanceThreshold: { type: Type.STRING, description: "A clear statement identifying the user load where performance began to significantly degrade." },
             keyObservations: {
@@ -820,7 +833,7 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
               description: "A list of simple text strings, each describing a specific observation from the data.",
               items: { type: Type.STRING }
             },
-            rootCauseSuggestion: { type: Type.STRING, description: "A technical hypothesis for the performance degradation." },
+            rootCauseSuggestion: { type: Type.STRING, description: "A technical hypothesis for the performance degradation or improvement." },
             recommendations: {
               type: Type.ARRAY,
               description: "A list of actionable recommendations.",

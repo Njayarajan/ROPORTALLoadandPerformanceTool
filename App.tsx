@@ -1089,6 +1089,10 @@ const App: React.FC = () => {
               keyObservations: [],
               rootCauseSuggestion: e instanceof Error ? e.message : 'An unknown error occurred.',
               recommendations: [],
+              trendDirection: 'Inconclusive', // Added
+              trendScore: 0, // Added
+              trendGrade: 'F', // Added
+              scoreRationale: 'Analysis failed due to an error.', // Added
           });
       } finally {
           setIsGeneratingTrendAnalysis(false);
