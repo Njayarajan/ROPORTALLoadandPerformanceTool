@@ -784,15 +784,15 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
         const config: Partial<LoadTestConfig> = run.config || {};
         const runMode = config.runMode || 'duration';
         const users = config.users ?? 'N/A';
+        const pacing = config.pacing ?? 0;
         let runContext = '';
 
         if (runMode === 'iterations') {
             const iterations = config.iterations ?? 'N/A';
-            const pacing = config.pacing ?? 'N/A';
             runContext = `${iterations} Iterations, ${users} Concurrent Users, ${pacing}ms Pacing`;
         } else {
             const duration = config.duration ?? 'N/A';
-            runContext = `${users} Peak Users, ${duration}s Duration`;
+            runContext = `${users} Peak Users, ${duration}s Duration, ${pacing}ms Pacing`;
         }
 
         return `Run ${index + 1} [Date: ${new Date(run.created_at).toLocaleString()}] [${runContext}]: Avg Latency=${avgResponseTime.toFixed(0)}ms, Max Latency=${maxResponseTime.toFixed(0)}ms, Success Rate=${successRate.toFixed(2)}% (Errors: ${errorRate.toFixed(2)}%), Throughput=${throughput.toFixed(1)} req/s`;
@@ -809,8 +809,9 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
       - Compare the *latest* runs against the *earlier* runs to determine the trend.
       - **IMPORTANT CONTEXT:** The application is hosted in the US, but the server is located in **Western Australia**. High latency (>200ms) is **physically expected** due to the geographic distance. 
       - **GRADING INSTRUCTION:** The latest run has a success rate of **${latestSuccessRate.toFixed(2)}%**. Based on the strict reliability rubric, this corresponds to a Grade of **${grade}**.
-      - **You MUST use "${grade}" as the 'trendGrade' and ${score} as the 'trendScore' in your JSON output.** Do not calculate your own grade.
-      - **PRIMARY METRIC:** Reliability (Success Rate).
+      - **You MUST use "${grade}" as the 'trendGrade' and ${score} as the 'trendScore' in your JSON output.** Do not calculate your own grade based on latency.
+      - **PRIMARY METRIC:** Reliability (Success Rate) and Throughput.
+      - **PACING:** Consider 'Pacing' in your analysis. A higher pacing (e.g. >500ms) generally reduces throughput but improves reliability. If latency is high, check if pacing is 0 (aggressive load).
       
       **Grading Rubric (Reference Only - use the mandated grade above):**
         - **90-100 (A - Excellent):** Success Rate > 99.5%. (High latency is acceptable if stable).
@@ -861,6 +862,9 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
     });
     
     jsonText = response.text.trim();
+    // Extra safety cleanup in case the model outputted markdown fences around the JSON
+    jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    
     const parsedReport = JSON.parse(jsonText) as TrendAnalysisReport;
 
     // SAFETY OVERWRITE: Ensure the grade matches the deterministic calculation, 

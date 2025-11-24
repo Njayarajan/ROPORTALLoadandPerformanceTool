@@ -41,8 +41,6 @@ const GradingLegend: React.FC = () => {
 };
 
 const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
-    // Using optional chaining on the run object properties to handle potential nulls
-    // and avoid TypeScript errors with empty object fallbacks.
     const stats = run.stats as TestStats | undefined;
     const config = run.config as LoadTestConfig | undefined;
     
@@ -50,8 +48,8 @@ const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
     const successCount = Number(stats?.successCount) || 0;
     const successRate = totalRequests > 0 ? (successCount / totalRequests) * 100 : 0;
     
-    const isIterationMode = config?.runMode === 'iterations';
     const peakUsers = config?.users || 0;
+    const isIterationMode = config?.runMode === 'iterations';
 
     return (
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-4 shadow-sm hover:border-gray-600 transition-colors">
