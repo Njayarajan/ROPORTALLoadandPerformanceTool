@@ -172,7 +172,7 @@ const TrendChart: React.FC<{ runs: TestRunSummary[] }> = ({ runs }) => {
                 <ChartBarSquareIcon className="w-5 h-5 mr-2 text-blue-400"/>
                 Metric Progression (Chronological)
             </h4>
-            <div style={{ width: '100%', height: 300 }}>
+            <div style={{ width: '100%', height: 300 }} id="trend-analysis-chart-container">
                 <ResponsiveContainer>
                     <ComposedChart data={sortedRuns} margin={{ top: 20, right: 20, left: 0, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -205,7 +205,8 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
         if (!report || !runs) return;
         setIsExporting(true);
         try {
-            await exportTrendAnalysisAsPdf(report, runs);
+            // Pass the ID of the chart container to capture it
+            await exportTrendAnalysisAsPdf(report, runs, 'trend-analysis-chart-container');
         } catch (e) {
             console.error("Failed to export trend analysis PDF:", e);
             alert(`Failed to generate PDF: ${e instanceof Error ? e.message : 'Unknown error'}`);
@@ -254,7 +255,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                                 <TrendScoreCard report={report} />
                             )}
 
-                            {/* 2. Visual Chart */}
+                            {/* 2. Visual Chart - Wrapped with ID for capture */}
                             <TrendChart runs={runs} />
 
                             {/* 3. Executive Summary */}

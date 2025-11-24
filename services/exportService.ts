@@ -519,7 +519,8 @@ export const exportAsPdf = async (
 
 export const exportTrendAnalysisAsPdf = async (
     report: TrendAnalysisReport,
-    runs: TestRunSummary[]
+    runs: TestRunSummary[],
+    chartElementId?: string
 ): Promise<void> => {
     const doc = new jsPDF('p', 'mm', 'a4');
     let y = 0;
@@ -542,6 +543,10 @@ export const exportTrendAnalysisAsPdf = async (
             warningText: '#78350f',
             conclusiveBg: '#dbeafe',
             conclusiveBorder: '#bfdbfe',
+            // New Light Blue Theme
+            cardBg: '#eff6ff', // blue-50
+            cardBorder: '#bfdbfe', // blue-200
+            chartBg: '#111827',
         },
         fontSizes: { title: 20, h1: 16, h2: 12, body: 10, small: 8 },
         margin: 15,
@@ -608,14 +613,29 @@ export const exportTrendAnalysisAsPdf = async (
         return neededHeight + 5; // bottom margin
     };
 
+    const getChartImageData = async (elementId: string): Promise<{ height: number, dataUrl: string }> => {
+        const chartElement = document.getElementById(elementId);
+        if (!chartElement) return { height: 0, dataUrl: '' };
+
+        try {
+            // Capture with dark background for consistency, but we place it on white paper
+            const canvas = await html2canvas(chartElement, { scale: 2, useCORS: true, backgroundColor: theme.colors.chartBg });
+            const imgWidth = CONTENT_WIDTH;
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+            return { height: imgHeight, dataUrl: canvas.toDataURL('image/png') };
+        } catch (e) {
+            console.error(`Failed to capture chart element "${elementId}".`, e);
+            return { height: 0, dataUrl: '' };
+        }
+    };
+
     // --- NEW: Score Card Drawing Function ---
     const drawScoreCard = () => {
         const cardHeight = 50;
-        // Check page break not strictly needed on page 1, but good practice
-        // We are placing this at fixed y=40 usually
         
-        doc.setDrawColor(theme.colors.border);
-        doc.setFillColor(255, 255, 255);
+        // Light Blue Background
+        doc.setDrawColor(theme.colors.cardBorder);
+        doc.setFillColor(theme.colors.cardBg);
         doc.roundedRect(theme.margin, y, CONTENT_WIDTH, cardHeight, 3, 3, 'FD');
 
         const circleX = theme.margin + 20;
@@ -649,17 +669,17 @@ export const exportTrendAnalysisAsPdf = async (
         doc.setFontSize(12);
         doc.setTextColor(gradeColor[0], gradeColor[1], gradeColor[2]);
         const direction = report.trendDirection;
-        // Simple arrow representation
         const arrow = direction === 'Improving' ? 'UP' : (direction === 'Degrading' ? 'DOWN' : '-');
         doc.text(`${direction} (${report.trendScore}/100)`, textX, y + 22);
 
-        // Rationale Box (Right side)
+        // Rationale Box (Right side) - White for contrast against light blue
         const rationaleX = textX + 60; // Offset for rationale
         const rationaleWidth = CONTENT_WIDTH - (rationaleX - theme.margin) - 5;
         const rationaleHeight = cardHeight - 10;
         
-        doc.setFillColor(249, 250, 251); // bg-gray-50
-        doc.roundedRect(rationaleX, y + 5, rationaleWidth, rationaleHeight, 2, 2, 'F');
+        doc.setFillColor(255, 255, 255); // White inner box
+        doc.setDrawColor(theme.colors.cardBorder);
+        doc.roundedRect(rationaleX, y + 5, rationaleWidth, rationaleHeight, 2, 2, 'FD');
         
         doc.setFontSize(9);
         doc.setTextColor(theme.colors.textDark);
@@ -703,8 +723,8 @@ export const exportTrendAnalysisAsPdf = async (
     };
 
     const drawTrendRunCard = (run: TestRunSummary, x: number, yPos: number, width: number, height: number) => {
-        // Card Container
-        doc.setFillColor(255, 255, 255);
+        // Card Container - Use very light gray for subtle separation
+        doc.setFillColor(250, 250, 250); 
         doc.setDrawColor(theme.colors.border);
         doc.roundedRect(x, yPos, width, height, 3, 3, 'FD');
 
@@ -722,7 +742,7 @@ export const exportTrendAnalysisAsPdf = async (
         const profileText = isIterationMode ? 'Iterations' : (config.loadProfile === 'stair-step' ? 'Stair Step' : 'Ramp Up');
         const dateText = new Date(run.created_at).toLocaleDateString();
 
-        doc.setFillColor(243, 244, 246); // bg-gray-100 badge
+        doc.setFillColor(229, 231, 235); // gray-200 badge
         doc.roundedRect(x + 4, yPos + 4, 25, 6, 1, 1, 'F');
         doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.textLight);
         doc.text(profileText, x + 16.5, yPos + 8, { align: 'center' });
@@ -734,7 +754,7 @@ export const exportTrendAnalysisAsPdf = async (
         const boxHeight = 18;
         let currentY = yPos + 14;
         
-        doc.setFillColor(249, 250, 251); // bg-gray-50
+        doc.setFillColor(255, 255, 255); // White inner box for contrast
         doc.setDrawColor(229, 231, 235); // border-gray-200
         doc.roundedRect(x + 4, currentY, width - 8, boxHeight, 1, 1, 'FD');
         
@@ -749,8 +769,8 @@ export const exportTrendAnalysisAsPdf = async (
 
         // Section 2: Successful Submissions Box
         currentY += boxHeight + 4;
-        doc.setFillColor(249, 250, 251); // bg-gray-50
-        doc.setDrawColor(229, 231, 235); // border-gray-200
+        doc.setFillColor(255, 255, 255); // White inner box
+        doc.setDrawColor(229, 231, 235); 
         doc.roundedRect(x + 4, currentY, width - 8, boxHeight + 6, 1, 1, 'FD');
 
         doc.setFontSize(7); doc.setTextColor(theme.colors.textLight);
@@ -809,6 +829,18 @@ export const exportTrendAnalysisAsPdf = async (
         drawScoreCard();
     }
 
+    // --- NEW: Trend Chart Capture ---
+    if (chartElementId) {
+        const chartData = await getChartImageData(chartElementId);
+        if (chartData.height > 0) {
+            checkPageBreak(chartData.height + 25);
+            y += 10;
+            drawSectionHeader('Metric Progression');
+            doc.addImage(chartData.dataUrl, 'PNG', theme.margin, y, CONTENT_WIDTH, chartData.height);
+            y += chartData.height + 10;
+        }
+    }
+
     doc.addPage();
     y = theme.margin;
     
@@ -831,7 +863,10 @@ export const exportTrendAnalysisAsPdf = async (
                 ['Avg. Latency', `${firstAvg.toFixed(0)} ms`, `${lastAvg.toFixed(0)} ms`, `${latencyDelta >= 0 ? '+' : ''}${latencyDelta.toFixed(1)}%`],
                 ['Throughput', `${firstTput.toFixed(2)} req/s`, `${lastTput.toFixed(2)} req/s`, `${tputDelta >= 0 ? '+' : ''}${tputDelta.toFixed(1)}%`]
             ],
-            theme: 'grid'
+            theme: 'grid',
+            // Stretch table to fit width
+            margin: { left: theme.margin, right: theme.margin },
+            tableWidth: 'auto'
         });
         y = (doc as any).lastAutoTable.finalY + 5;
     }
@@ -925,7 +960,10 @@ export const exportTrendAnalysisAsPdf = async (
                 errorCount.toLocaleString()
             ];
         }),
-        theme: 'grid'
+        theme: 'grid',
+        // Stretch table to fit width
+        margin: { left: theme.margin, right: theme.margin },
+        tableWidth: 'auto'
     });
     
     // Page Numbering
@@ -944,157 +982,197 @@ export const exportComparisonAsPdf = async (
     runA: TestRun,
     runB: TestRun,
     chartElementIds: string[],
-    analysis: ComparisonAnalysisReport | null
+    report: ComparisonAnalysisReport | null
 ): Promise<void> => {
+    
     const doc = new jsPDF('p', 'mm', 'a4');
     let y = 0;
-    const theme = { margin: 15, colors: { textDark: '#111827', text: '#374151', textLight: '#6b7280', border: '#e5e7eb', positive: '#10b981', negative: '#ef4444', neutral: '#3b82f6' }, fontSizes: { title: 20, h1: 16, h2: 12, body: 10, small: 8 } };
+
+    const theme = {
+        colors: {
+            primary: '#3b82f6',
+            textDark: '#111827',
+            text: '#374151',
+            textLight: '#6b7280',
+            bgLight: '#f3f4f6',
+            summaryBg: '#f9fafb',
+            summaryBorder: '#e5e7eb',
+            border: '#e5e7eb',
+            chartBg: '#161b22',
+        },
+        fontSizes: {
+            title: 20,
+            h1: 16,
+            h2: 12,
+            body: 10,
+            small: 8,
+        },
+        margin: 15,
+    };
     const PAGE_WIDTH = doc.internal.pageSize.getWidth();
+    const PAGE_HEIGHT = doc.internal.pageSize.getHeight();
     const CONTENT_WIDTH = PAGE_WIDTH - theme.margin * 2;
-    
-    const checkPageBreak = (neededHeight: number) => { if (y + neededHeight > doc.internal.pageSize.getHeight() - theme.margin) { doc.addPage(); y = theme.margin; } };
-    const drawSectionHeader = (text: string) => { checkPageBreak(30); y += 10; doc.setFontSize(theme.fontSizes.h1); doc.setFont('helvetica', 'bold'); doc.text(text, theme.margin, y, {}); y += 8; doc.setDrawColor(theme.colors.border); doc.line(theme.margin, y, PAGE_WIDTH - theme.margin, y); y += 8; };
-    const addChart = async (elementId: string) => {
-        const chartElement = document.getElementById(elementId);
-        if (!chartElement) return;
-        try {
-            const canvas = await html2canvas(chartElement, { scale: 2, useCORS: true, backgroundColor: '#161b22' });
-            const imgWidth = CONTENT_WIDTH;
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-            checkPageBreak(imgHeight + 20);
-            doc.addImage(canvas.toDataURL('image/png'), 'PNG', theme.margin, y, imgWidth, imgHeight);
-            y += imgHeight + 10;
-        } catch (e) {
-            console.error(`Failed to add chart element "${elementId}" to PDF. Skipping.`, e);
-            checkPageBreak(20);
-            doc.setTextColor('#ef4444');
-            doc.text(`[Chart "${elementId}" failed to render in PDF]`, theme.margin, y + 10);
-            y += 20;
+    const LINE_HEIGHT = 5.5;
+
+    const checkPageBreak = (neededHeight: number) => {
+        if (y + neededHeight > PAGE_HEIGHT - theme.margin) {
+            doc.addPage();
+            y = theme.margin;
         }
     };
 
-    // Page 1: Title
-    y = 40;
-    doc.setFontSize(theme.fontSizes.title); doc.setFont('helvetica', 'bold');
-    doc.text('Test Run Comparison Report', PAGE_WIDTH / 2, y, { align: 'center' });
-    y += 15;
-    doc.setFontSize(theme.fontSizes.h2); doc.setFont('helvetica', 'normal');
-    doc.text(`Baseline: ${runA.title}`, PAGE_WIDTH / 2, y, { align: 'center' });
-    y += 8;
-    doc.text(`Comparison: ${runB.title}`, PAGE_WIDTH / 2, y, { align: 'center' });
+    const drawSectionHeader = (text: string) => {
+        checkPageBreak(20);
+        y += 5;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(theme.fontSizes.h1);
+        doc.setTextColor(theme.colors.textDark);
+        doc.text(text, theme.margin, y);
+        y += 2;
+        doc.setDrawColor(theme.colors.border);
+        doc.line(theme.margin, y + 2, PAGE_WIDTH - theme.margin, y + 2);
+        y += 10;
+    };
 
-    // Page 2: AI Analysis
-    if (analysis) {
-        doc.addPage();
-        y = theme.margin;
-        drawSectionHeader('Comparison Analysis');
+    const getChartImageData = async (elementId: string): Promise<{ height: number, dataUrl: string }> => {
+        const chartElement = document.getElementById(elementId);
+        if (!chartElement) return { height: 0, dataUrl: '' };
+
+        try {
+            const canvas = await html2canvas(chartElement, { scale: 2, useCORS: true, backgroundColor: theme.colors.chartBg });
+            const imgWidth = CONTENT_WIDTH;
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+            return { height: imgHeight, dataUrl: canvas.toDataURL('image/png') };
+        } catch (e) {
+            console.error(`Failed to capture chart element "${elementId}".`, e);
+            return { height: 0, dataUrl: '' };
+        }
+    };
+
+    // --- CONTENT GENERATION ---
+
+    // 1. Title Page Header
+    y = theme.margin + 5;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(theme.fontSizes.title);
+    doc.setTextColor(theme.colors.textDark);
+    doc.text('Test Comparison Report', PAGE_WIDTH / 2, y, { align: 'center' });
+    
+    y += 10;
+    doc.setFontSize(theme.fontSizes.small);
+    doc.setTextColor(theme.colors.textLight);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Generated: ${new Date().toLocaleString()}`, PAGE_WIDTH / 2, y, { align: 'center' });
+    
+    y += 10;
+    
+    // 2. Executive Summary
+    if (report?.comparisonSummary) {
+        drawSectionHeader('Executive Summary');
+        doc.setFontSize(theme.fontSizes.body);
+        doc.setTextColor(theme.colors.text);
+        const lines = doc.splitTextToSize(report.comparisonSummary, CONTENT_WIDTH - 6);
         
-        doc.setFontSize(theme.fontSizes.h2); doc.setFont('helvetica', 'bold'); doc.text('Executive Summary', theme.margin, y, {}); y += 6;
-        const summaryLines = doc.splitTextToSize(analysis.comparisonSummary, CONTENT_WIDTH);
-        doc.setFontSize(theme.fontSizes.body); doc.setFont('helvetica', 'normal'); doc.text(summaryLines, theme.margin, y, {}); y += summaryLines.length * 5 + 6;
-
-        doc.setFontSize(theme.fontSizes.h2); doc.setFont('helvetica', 'bold'); doc.text('Key Metric Changes', theme.margin, y, {}); y += 6;
-        autoTable(doc, {
-            startY: y,
-            head: [['Metric', 'Baseline', 'Comparison', 'Delta', 'Analysis']],
-            body: analysis.keyMetricChanges.map(c => [c.metric, c.baselineValue, c.comparisonValue, c.delta, c.analysis]),
-            theme: 'grid',
-            headStyles: { fillColor: [41, 128, 185] },
-            didParseCell: (data: any) => {
-                const metric = analysis.keyMetricChanges[data.row.index];
-                if (metric && data.column.dataKey === 'Delta') {
-                    if (metric.impact === 'Positive') data.cell.styles.textColor = '#10b981';
-                    if (metric.impact === 'Negative') data.cell.styles.textColor = '#ef4444';
-                }
-            }
-        });
-        y = (doc as any).lastAutoTable.finalY + 10;
-
-        checkPageBreak(60);
-        doc.setFontSize(theme.fontSizes.h2); doc.setFont('helvetica', 'bold'); doc.text('Root Cause Analysis', theme.margin, y, {}); y += 6;
-        const causeLines = doc.splitTextToSize(analysis.rootCauseAnalysis, CONTENT_WIDTH);
-        doc.setFontSize(theme.fontSizes.body); doc.setFont('helvetica', 'normal'); doc.text(causeLines, theme.margin, y, {}); y += causeLines.length * 5 + 6;
-
-        checkPageBreak(60);
-        doc.setFontSize(theme.fontSizes.h2); doc.setFont('helvetica', 'bold'); doc.text('Recommendations', theme.margin, y, {}); y += 6;
-        analysis.recommendations.forEach((rec, i) => {
-            const recLines = doc.splitTextToSize(`${i + 1}. ${rec}`, CONTENT_WIDTH);
-            checkPageBreak(recLines.length * 5 + 4);
-            doc.text(recLines, theme.margin, y, {});
-            y += recLines.length * 5 + 2;
-        });
+        const blockHeight = lines.length * LINE_HEIGHT + 10;
+        checkPageBreak(blockHeight);
+        
+        doc.setFillColor(theme.colors.summaryBg);
+        doc.setDrawColor(theme.colors.summaryBorder);
+        doc.roundedRect(theme.margin, y, CONTENT_WIDTH, blockHeight, 2, 2, 'FD');
+        
+        doc.text(lines, theme.margin + 3, y + 7);
+        y += blockHeight + 10;
     }
 
-    // Page 3: Comparison Tables
-    doc.addPage();
-    y = theme.margin;
-    drawSectionHeader('Performance Metrics Comparison');
+    // 3. Comparison Metrics Table
+    drawSectionHeader('Key Metrics Comparison');
     
-    const statsBody = [
-        ['Throughput', `${runA.stats.throughput.toFixed(2)}/s`, `${runB.stats.throughput.toFixed(2)}/s`, true],
-        ['Apdex Score', runA.stats.apdexScore.toFixed(2), runB.stats.apdexScore.toFixed(2), true],
-        ['Error Rate', `${((runA.stats.errorCount / runA.stats.totalRequests) * 100).toFixed(1)}%`, `${((runB.stats.errorCount / runB.stats.totalRequests) * 100).toFixed(1)}%`, false],
-        ['Avg. Latency', `${runA.stats.avgResponseTime.toFixed(0)} ms`, `${runB.stats.avgResponseTime.toFixed(0)} ms`, false],
-        ['Max Latency', `${runA.stats.maxResponseTime.toFixed(0)} ms`, `${runB.stats.maxResponseTime.toFixed(0)} ms`, false],
-        ['Consistency (CV)', `${runA.stats.latencyCV.toFixed(1)}%`, `${runB.stats.latencyCV.toFixed(1)}%`, false],
-    ].map(([label, valA, valB, higherIsBetter]) => {
-        const numA = parseFloat(String(valA));
-        const numB = parseFloat(String(valB));
-        let deltaText = '-';
-        if (!isNaN(numA) && !isNaN(numB) && numA !== 0) {
-            const percentageChange = ((numB - numA) / numA) * 100;
-            if (Math.abs(percentageChange) > 0.1) deltaText = `${percentageChange > 0 ? '+' : ''}${percentageChange.toFixed(1)}%`;
-        }
-        return [label, valA, valB, deltaText];
-    });
+    const getDeltaString = (valA: number, valB: number) => {
+        if (valA === 0) return '-';
+        const pct = ((valB - valA) / valA) * 100;
+        return `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`;
+    };
+
+    const tableData = [
+        ['Metric', `Baseline (${new Date(runA.created_at).toLocaleDateString()})`, `Comparison (${new Date(runB.created_at).toLocaleDateString()})`, 'Delta'],
+        ['Avg Latency', `${runA.stats.avgResponseTime.toFixed(0)}ms`, `${runB.stats.avgResponseTime.toFixed(0)}ms`, getDeltaString(runA.stats.avgResponseTime, runB.stats.avgResponseTime)],
+        ['Throughput', `${runA.stats.throughput.toFixed(2)}/s`, `${runB.stats.throughput.toFixed(2)}/s`, getDeltaString(runA.stats.throughput, runB.stats.throughput)],
+        ['Error Rate', `${((runA.stats.errorCount/runA.stats.totalRequests)*100).toFixed(2)}%`, `${((runB.stats.errorCount/runB.stats.totalRequests)*100).toFixed(2)}%`, ''],
+        ['Apdex Score', runA.stats.apdexScore.toFixed(2), runB.stats.apdexScore.toFixed(2), '']
+    ];
 
     autoTable(doc, {
         startY: y,
-        head: [['Metric', 'Baseline', 'Comparison', 'Delta']],
-        body: statsBody,
+        head: [tableData[0]],
+        body: tableData.slice(1),
         theme: 'grid',
-        headStyles: { fillColor: [41, 128, 185] },
+        margin: { left: theme.margin, right: theme.margin },
+        headStyles: { fillColor: [59, 130, 246] }
     });
-    y = (doc as any).lastAutoTable.finalY + 10;
+    
+    y = (doc as any).lastAutoTable.finalY + 15;
 
-    drawSectionHeader('Configuration Comparison');
-    const configBody = [
-        ['Virtual Users', runA.config.users, runB.config.users],
-        ['Run Mode', runA.config.runMode, runB.config.runMode],
-        [runA.config.runMode === 'duration' ? 'Duration (s)' : 'Iterations', runA.config.runMode === 'duration' ? runA.config.duration : runA.config.iterations, runB.config.runMode === 'duration' ? runB.config.duration : runB.config.iterations],
-        ['Load Profile', runA.config.loadProfile, runB.config.loadProfile],
-    ].map(([label, valA, valB]) => [String(label), String(valA), String(valB)]);
-
-     autoTable(doc, {
-        startY: y,
-        head: [['Parameter', 'Baseline', 'Comparison']],
-        body: configBody,
-        theme: 'grid',
-        headStyles: { fillColor: [41, 128, 185] },
-        didParseCell: (data: any) => {
-            if (data.column.index > 0 && Array.isArray(data.row.raw)) {
-                // FIX: Correctly access cell data for comparison. The original logic was flawed and
-                // would cause a crash. This now safely compares adjacent cells in the raw data array.
-                const currentValue = data.row.raw[data.column.index];
-                const previousValue = data.row.raw[data.column.index - 1];
-                if (currentValue !== previousValue) {
-                    data.cell.styles.fillColor = '#fef3c7'; // a light yellow
-                    data.cell.styles.textColor = '#000000';
-                }
+    // 4. Charts
+    if (chartElementIds.length > 0) {
+        drawSectionHeader('Visual Comparison');
+        for (const id of chartElementIds) {
+            const chart = await getChartImageData(id);
+            if (chart.height > 0) {
+                checkPageBreak(chart.height + 10);
+                doc.addImage(chart.dataUrl, 'PNG', theme.margin, y, CONTENT_WIDTH, chart.height);
+                y += chart.height + 10;
             }
         }
-    });
+    }
 
-    // Page 4 & 5: Charts
-    doc.addPage();
-    y = theme.margin;
-    drawSectionHeader('Baseline Performance Timeline');
-    await addChart(chartElementIds[0]);
+    // 5. Key Changes & Recommendations
+    if (report) {
+        if (report.keyMetricChanges && report.keyMetricChanges.length > 0) {
+            drawSectionHeader('Key Metric Changes');
+            report.keyMetricChanges.forEach(change => {
+                const text = `${change.metric}: ${change.analysis} (${change.delta})`;
+                const lines = doc.splitTextToSize(text, CONTENT_WIDTH);
+                checkPageBreak(lines.length * LINE_HEIGHT + 5);
+                
+                // Bullet point
+                doc.setFillColor(theme.colors.textDark);
+                doc.circle(theme.margin + 2, y - 1, 1, 'F');
+                
+                doc.setFontSize(theme.fontSizes.body);
+                doc.setTextColor(theme.colors.text);
+                doc.text(lines, theme.margin + 6, y);
+                y += lines.length * LINE_HEIGHT + 3;
+            });
+            y += 5;
+        }
 
-    doc.addPage();
-    y = theme.margin;
-    drawSectionHeader('Comparison Performance Timeline');
-    await addChart(chartElementIds[1]);
+        if (report.rootCauseAnalysis) {
+            drawSectionHeader('Root Cause Analysis');
+            const lines = doc.splitTextToSize(report.rootCauseAnalysis, CONTENT_WIDTH);
+            checkPageBreak(lines.length * LINE_HEIGHT);
+            doc.text(lines, theme.margin, y);
+            y += lines.length * LINE_HEIGHT + 10;
+        }
 
-    doc.save(`Comparison_Report_${runA.title.replace(/\s/g, '_')}_vs_${runB.title.replace(/\s/g, '_')}.pdf`);
+        if (report.recommendations && report.recommendations.length > 0) {
+            drawSectionHeader('Recommendations');
+            report.recommendations.forEach((rec, i) => {
+                const lines = doc.splitTextToSize(`${i+1}. ${rec}`, CONTENT_WIDTH);
+                checkPageBreak(lines.length * LINE_HEIGHT + 3);
+                doc.text(lines, theme.margin, y);
+                y += lines.length * LINE_HEIGHT + 3;
+            });
+        }
+    }
+
+    // Page Numbers
+    const pageCount = doc.internal.pages.length - 1;
+    for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(theme.fontSizes.small);
+        doc.setTextColor(theme.colors.textLight);
+        doc.text(`Page ${i} of ${pageCount}`, PAGE_WIDTH - theme.margin, PAGE_HEIGHT - 10, { align: 'right' });
+    }
+
+    doc.save(`Comparison_Report_${new Date().toISOString().split('T')[0]}.pdf`);
 };
