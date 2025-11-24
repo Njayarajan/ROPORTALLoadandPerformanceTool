@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import type { TrendAnalysisReport, TestRunSummary, TestStats, LoadTestConfig } from '../types';
 import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon } from './icons';

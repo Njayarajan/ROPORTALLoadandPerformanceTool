@@ -73,10 +73,6 @@ async function virtualUserSingleRequest(
   const requestId = crypto.randomUUID();
   const vuId = virtualUserId !== undefined ? `vu-${virtualUserId}` : 'vu-unknown';
 
-  // --- PERFORMANCE FIX: Removed artificial jitter ---
-  // Previously used to prevent thundering herd, but caused throughput slowdown.
-  // Removing to maximize request rate.
-
   // --- CACHE BUSTING LOGIC ---
   // We intentionally append a unique nonce AND a timestamp to the URL. 
   // This forces every single request to be treated as unique by browsers, proxies, load balancers, and CDNs.
@@ -748,7 +744,6 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
     const systemInstruction = `You are a senior Site Reliability Engineer (SRE) specializing in performance trend analysis. Your job is to analyze a series of load test results and produce a report for both managers and developers. Your output must be a structured JSON object. You MUST provide a value for every field in the schema. No field, especially 'conclusiveSummary', should ever be an empty string.`;
     
     // Sort runs chronologically (oldest to newest) to detect improvement properly.
-    // Note: The original runs array might be sorted differently (e.g., newest first), so we force a chronological sort here.
     const sortedRuns = [...runs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     
     // Calculate deterministic metrics for the LATEST run
@@ -765,8 +760,6 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
     const { grade, score } = calculateDeterministicGrade(latestSuccessRate);
 
     const summaryData = sortedRuns.map((run, index) => {
-        // FIX: Defensively access properties on the stats object, coercing them to numbers.
-        // This prevents crashes from .toFixed() if a property is missing, null, or a non-numeric string.
         const stats: Partial<TestStats> = run.stats || {};
         const totalRequests = Number(stats.totalRequests) || 0;
         const errorCount = Number(stats.errorCount) || 0;
@@ -795,7 +788,10 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
             runContext = `${users} Peak Users, ${duration}s Duration, ${pacing}ms Pacing`;
         }
 
-        return `Run ${index + 1} [Date: ${new Date(run.created_at).toLocaleString()}] [${runContext}]: Avg Latency=${avgResponseTime.toFixed(0)}ms, Max Latency=${maxResponseTime.toFixed(0)}ms, Success Rate=${successRate.toFixed(2)}% (Errors: ${errorRate.toFixed(2)}%), Throughput=${throughput.toFixed(1)} req/s`;
+        // Sanitize title to prevent backtick issues in the prompt string
+        const safeTitle = (run.title || 'Untitled').replace(/`/g, "'");
+
+        return `Run ${index + 1} [${safeTitle}] [${runContext}]: Avg Latency=${avgResponseTime.toFixed(0)}ms, Max Latency=${maxResponseTime.toFixed(0)}ms, Success Rate=${successRate.toFixed(2)}% (Errors: ${errorRate.toFixed(2)}%), Throughput=${throughput.toFixed(1)} req/s`;
     }).join('\n');
 
     const userPrompt = `
@@ -807,20 +803,23 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
 
       **Analysis Guidelines:**
       - Compare the *latest* runs against the *earlier* runs to determine the trend.
-      - **IMPORTANT CONTEXT:** The application is hosted in the US, but the server is located in **Western Australia**. High latency (>200ms) is **physically expected** due to the geographic distance. 
+      - **IMPORTANT CONTEXT:**
+      - **Success Metric:** Performance is strictly graded on Reliability (Success Rate), NOT latency. A test with 100% success is an 'A' grade regardless of response time.
+      - **Request Pacing:** You must factor in 'Pacing' (ms). A test with high pacing (e.g. 1000ms) will naturally have lower throughput than a test with 0ms pacing. This is an expected configuration difference, not a performance degradation.
+      - **Geo-Location:** Do NOT mention user or server locations (e.g., "US-based", "Australia"). Focus solely on the performance metrics.
+      
       - **GRADING INSTRUCTION:** The latest run has a success rate of **${latestSuccessRate.toFixed(2)}%**. Based on the strict reliability rubric, this corresponds to a Grade of **${grade}**.
       - **You MUST use "${grade}" as the 'trendGrade' and ${score} as the 'trendScore' in your JSON output.** Do not calculate your own grade based on latency.
       - **PRIMARY METRIC:** Reliability (Success Rate) and Throughput.
-      - **PACING:** Consider 'Pacing' in your analysis. A higher pacing (e.g. >500ms) generally reduces throughput but improves reliability. If latency is high, check if pacing is 0 (aggressive load).
       
       **Grading Rubric (Reference Only - use the mandated grade above):**
-        - **90-100 (A - Excellent):** Success Rate > 99.5%. (High latency is acceptable if stable).
+        - **90-100 (A - Excellent):** Success Rate > 99.5%.
         - **80-89 (B - Good):** Success Rate > 98%.
         - **70-79 (C - Fair):** Success Rate > 95%.
-        - **60-69 (D - Poor):** Success Rate > 90% OR severe latency degradation (spikes).
-        - **0-59 (F - Critical):** Success Rate < 90% (Critical Failure).
+        - **60-69 (D - Poor):** Success Rate > 90%.
+        - **0-59 (F - Critical):** Success Rate < 90%.
       
-      **CRITICAL REQUIREMENT:** The 'conclusiveSummary' field is the most important part of this report. It MUST explicitly mention that **high latency is expected due to the US-to-Australia geographic distance** and that the grade is primarily based on the reliability (success rate) of the tests.
+      **CRITICAL REQUIREMENT:** The 'conclusiveSummary' field is the most important part of this report. It MUST explicitly mention the magnitude of the tests (e.g., "The tests ran for X seconds with Y concurrent users resulting in over Z successful submissions") to give the reader a clear idea of the short-burst load intensity.
 
       - **You MUST generate a value for every field defined in the JSON schema.** Do not omit any fields. All fields must be populated with non-empty, meaningful values.
 
