@@ -696,13 +696,13 @@ export const exportTrendAnalysisAsPdf = async (
         // Legend (Small row below)
         const legendY = y;
         const legendWidth = CONTENT_WIDTH / 5;
-        const legendHeight = 12;
+        const legendHeight = 16; // Increased height to fit rubric details
         const grades = [
-            { g: 'A', range: '90-100', label: '>99.5%', color: [22, 163, 74] },
-            { g: 'B', range: '80-89', label: '>98%', color: [37, 99, 235] },
-            { g: 'C', range: '70-79', label: '>95%', color: [234, 179, 8] },
-            { g: 'D', range: '60-69', label: '>90%', color: [249, 115, 22] },
-            { g: 'F', range: '0-59', label: '<90%', color: [220, 38, 38] },
+            { g: 'A', range: '90-100', desc: 'Near-Perfect Reliability', criteria: '>99.5%', color: [22, 163, 74] },
+            { g: 'B', range: '80-89', desc: 'Excellent Reliability', criteria: '>98%', color: [37, 99, 235] },
+            { g: 'C', range: '70-79', desc: 'Good Reliability', criteria: '>95%', color: [234, 179, 8] },
+            { g: 'D', range: '60-69', desc: 'Fair Reliability', criteria: '>90%', color: [249, 115, 22] },
+            { g: 'F', range: '0-59', desc: 'Poor Reliability', criteria: '<90%', color: [220, 38, 38] },
         ];
 
         grades.forEach((g, i) => {
@@ -711,12 +711,20 @@ export const exportTrendAnalysisAsPdf = async (
             doc.setDrawColor(g.color[0], g.color[1], g.color[2]);
             doc.roundedRect(lx, legendY, legendWidth - 2, legendHeight, 1, 1, 'FD');
             
-            doc.setFontSize(8);
             doc.setTextColor(g.color[0], g.color[1], g.color[2]);
+            
+            // Line 1: Grade + Range (Bold)
+            doc.setFontSize(8);
             doc.setFont('helvetica', 'bold');
-            doc.text(`${g.g}`, lx + 4, legendY + 5);
+            doc.text(`${g.g} (${g.range})`, lx + 2, legendY + 4);
+            
+            // Line 2: Description (Normal, smaller)
+            doc.setFontSize(6);
             doc.setFont('helvetica', 'normal');
-            doc.text(g.label, lx + 4, legendY + 9);
+            doc.text(g.desc, lx + 2, legendY + 8);
+            
+            // Line 3: Criteria (Normal, smaller)
+            doc.text(g.criteria, lx + 2, legendY + 12);
         });
         
         y += legendHeight + 10;
