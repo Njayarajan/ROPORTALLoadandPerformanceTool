@@ -49,6 +49,12 @@ const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
     
     const peakUsers = config?.users || 0;
     const isIterationMode = config?.runMode === 'iterations';
+    const pacing = config?.pacing || 0;
+    const loadProfile = config?.loadProfile || 'ramp-up';
+
+    const profileDetailText = loadProfile === 'stair-step' 
+        ? `Step: +${config?.stepUsers ?? 0} every ${config?.stepDuration ?? 0}s` 
+        : `Ramp: ${config?.rampUp ?? 0}s`;
 
     return (
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-4 shadow-sm hover:border-gray-600 transition-colors">
@@ -69,17 +75,28 @@ const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
             <div className="grid grid-cols-1 gap-3">
                 <div className="bg-gray-900/30 p-4 rounded border border-gray-700/50">
                     <p className="text-xs font-bold text-gray-300 uppercase">Peak Concurrent Users</p>
-                    <p className="text-[10px] text-gray-500 mt-1 mb-2 leading-tight">The maximum number of concurrent virtual users active during the test.</p>
-                    <div className="flex items-baseline space-x-1">
+                    <div className="flex items-baseline space-x-1 mt-1 mb-2">
                         <span className="text-3xl font-bold text-white">{peakUsers}</span>
                         <span className="text-xs text-gray-500">users</span>
+                    </div>
+                    
+                    {/* NEW: Configuration Sub-section */}
+                    <div className="border-t border-gray-700/50 pt-2 mt-1 grid grid-cols-2 gap-2 text-[10px] text-gray-400">
+                        <div>
+                            <span className="block uppercase tracking-wider text-gray-600">Pacing</span>
+                            <span className="text-gray-300 font-mono">{pacing}ms</span>
+                            <span className="ml-1 text-gray-500">({pacing > 500 ? 'Realistic' : 'Aggressive'})</span>
+                        </div>
+                        <div className="text-right">
+                            <span className="block uppercase tracking-wider text-gray-600">Profile</span>
+                            <span className="text-gray-300">{profileDetailText}</span>
+                        </div>
                     </div>
                 </div>
 
                 <div className="bg-gray-900/30 p-4 rounded border border-gray-700/50">
                     <p className="text-xs font-bold text-gray-300 uppercase">Successful Submissions</p>
-                    <p className="text-[10px] text-gray-500 mt-1 mb-2 leading-tight">The total number of successful requests.</p>
-                    <div className="flex items-baseline justify-between mb-2">
+                    <div className="flex items-baseline justify-between mb-2 mt-1">
                         <span className="text-2xl font-bold text-green-400">{successCount.toLocaleString()}</span>
                         <span className="text-xs text-gray-400">{successRate.toFixed(1)}% of attempts</span>
                     </div>

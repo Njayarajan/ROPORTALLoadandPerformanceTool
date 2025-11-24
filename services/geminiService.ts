@@ -785,7 +785,17 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
             runContext = `${iterations} Iterations, ${users} Concurrent Users, ${pacing}ms Pacing`;
         } else {
             const duration = config.duration ?? 'N/A';
-            runContext = `${users} Peak Users, ${duration}s Duration, ${pacing}ms Pacing`;
+            const loadProfile = config.loadProfile || 'ramp-up';
+            
+            // Add detailed profile info so the AI can differentiate between aggressive/realistic scenarios
+            let profileDetails = '';
+            if (loadProfile === 'stair-step') {
+                profileDetails = `Stair-Step (+${config.stepUsers ?? 0} users every ${config.stepDuration ?? 0}s)`;
+            } else {
+                profileDetails = `Linear Ramp-Up over ${config.rampUp ?? 0}s`;
+            }
+            
+            runContext = `${users} Peak Users, ${duration}s Duration, ${pacing}ms Pacing, ${profileDetails}`;
         }
 
         // Sanitize title to prevent backtick issues in the prompt string
@@ -803,9 +813,19 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
 
       **Analysis Guidelines:**
       - Compare the *latest* runs against the *earlier* runs to determine the trend.
-      - **IMPORTANT CONTEXT:**
+      
+      **Configuration & Realism Context:**
+      You MUST analyze the realism of the test based on the 'Pacing' and 'Load Profile' values provided in the run context:
+      - **Request Pacing:**
+        - **< 100ms:** Aggressive Stress Test. Measures max throughput but is unrealistic for human behavior. High load here is expected to degrade performance faster.
+        - **> 500ms:** Realistic User Simulation. Measures how the system handles typical user journey speeds.
+      - **Load Profile:**
+        - **Stair-Step:** Designed to test stability and recovery at specific concurrency levels. Look for performance holding steady during the steps.
+        - **Ramp-Up:** Designed to find the breaking point. Degradation near the end is common.
+      
+      **Mandatory Instruction:** You must explicitly mention in the 'overallTrendSummary' or 'conclusiveSummary' whether the latest test represents a "Realistic User Scenario" or a "Stress/Capacity Test" based on the pacing configuration, and explain how this influences the results.
+
       - **Success Metric:** Performance is strictly graded on Reliability (Success Rate), NOT latency. A test with 100% success is an 'A' grade regardless of response time.
-      - **Request Pacing:** You must factor in 'Pacing' (ms). A test with high pacing (e.g. 1000ms) will naturally have lower throughput than a test with 0ms pacing. This is an expected configuration difference, not a performance degradation.
       - **Geo-Location:** Do NOT mention user or server locations (e.g., "US-based", "Australia"). Focus solely on the performance metrics.
       
       - **GRADING INSTRUCTION:** The latest run has a success rate of **${latestSuccessRate.toFixed(2)}%**. Based on the strict reliability rubric, this corresponds to a Grade of **${grade}**.
