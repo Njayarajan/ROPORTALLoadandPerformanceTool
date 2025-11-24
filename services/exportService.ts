@@ -531,8 +531,8 @@ export const exportTrendAnalysisAsPdf = async (
             textDark: '#111827',
             text: '#374151',
             textLight: '#6b7280',
-            bgLight: '#f3f4f6',
-            summaryBg: '#f9fafb',
+            bgLight: '#f1f5f9', // Slate-100
+            summaryBg: '#f8fafc', // Slate-50
             summaryBorder: '#e5e7eb',
             border: '#e5e7eb',
             latency: '#3b82f6',
@@ -731,8 +731,8 @@ export const exportTrendAnalysisAsPdf = async (
     };
 
     const drawTrendRunCard = (run: TestRunSummary, x: number, yPos: number, width: number, height: number) => {
-        // Card Container - Use very light gray for subtle separation
-        doc.setFillColor(250, 250, 250); 
+        // Card Container - Use Very Light Blue for contrast (Sky-50)
+        doc.setFillColor(240, 249, 255); 
         doc.setDrawColor(theme.colors.border);
         doc.roundedRect(x, yPos, width, height, 3, 3, 'FD');
 
@@ -750,9 +750,21 @@ export const exportTrendAnalysisAsPdf = async (
         const profileText = isIterationMode ? 'Iterations' : (config.loadProfile === 'stair-step' ? 'Stair Step' : 'Ramp Up');
         const dateText = new Date(run.created_at).toLocaleDateString();
 
-        doc.setFillColor(229, 231, 235); // gray-200 badge
+        // Badge Color based on Profile Type
+        const isStairStep = config.loadProfile === 'stair-step';
+        if (isStairStep) {
+            doc.setFillColor(124, 58, 237); // Purple (violet-600)
+        } else {
+            doc.setFillColor(37, 99, 235); // Blue (blue-600)
+        }
+        
+        // Badge Rect
         doc.roundedRect(x + 4, yPos + 4, 25, 6, 1, 1, 'F');
-        doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.textLight);
+        
+        // Badge Text (White for contrast)
+        doc.setFontSize(7); 
+        doc.setFont('helvetica', 'bold'); 
+        doc.setTextColor(255, 255, 255);
         doc.text(profileText, x + 16.5, yPos + 8, { align: 'center' });
 
         doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(theme.colors.textLight);
@@ -872,9 +884,10 @@ export const exportTrendAnalysisAsPdf = async (
                 ['Throughput', `${firstTput.toFixed(2)} req/s`, `${lastTput.toFixed(2)} req/s`, `${tputDelta >= 0 ? '+' : ''}${tputDelta.toFixed(1)}%`]
             ],
             theme: 'grid',
-            // Stretch table to fit width
+            // Stretch table to fit width properly
             margin: { left: theme.margin, right: theme.margin },
-            tableWidth: 'auto'
+            tableWidth: 'auto',
+            styles: { cellPadding: 3 }
         });
         y = (doc as any).lastAutoTable.finalY + 5;
     }
@@ -969,9 +982,10 @@ export const exportTrendAnalysisAsPdf = async (
             ];
         }),
         theme: 'grid',
-        // Stretch table to fit width
+        // Stretch table to fit width properly
         margin: { left: theme.margin, right: theme.margin },
-        tableWidth: 'auto'
+        tableWidth: 'auto',
+        styles: { cellPadding: 3 }
     });
     
     // Page Numbering

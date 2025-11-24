@@ -256,7 +256,9 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                             )}
 
                             {/* 2. Visual Chart - Wrapped with ID for capture */}
-                            <TrendChart runs={runs} />
+                            <div id="trend-analysis-chart-container">
+                                <TrendChart runs={runs} />
+                            </div>
 
                             {/* 3. Executive Summary */}
                             <div className="space-y-3">
