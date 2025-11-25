@@ -184,7 +184,7 @@ const TrendChart: React.FC<{ runs: TestRunSummary[], title: string, filterType: 
     const sortedRuns = useMemo(() => {
         return [...runs]
             .filter(r => {
-                const isGet = r.config.method === 'GET' || r.config.method === 'HEAD';
+                const isGet = r.config?.method === 'GET' || r.config?.method === 'HEAD';
                 return filterType === 'web' ? isGet : !isGet;
             })
             .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
@@ -199,7 +199,7 @@ const TrendChart: React.FC<{ runs: TestRunSummary[], title: string, filterType: 
     if (sortedRuns.length === 0) return null;
 
     return (
-        <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 flex-1 min-w-[300px]">
+        <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 w-full">
             <h4 className="text-sm font-semibold text-white mb-4 flex items-center">
                 <ChartBarSquareIcon className="w-5 h-5 mr-2 text-blue-400"/>
                 {title} (Latency & Throughput)
@@ -382,8 +382,8 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                                 </div>
                             </div>
 
-                            {/* 2. Visual Charts - Split */}
-                            <div className="flex flex-wrap gap-6" id="trend-analysis-chart-container">
+                            {/* 2. Visual Charts - Split - Changed to flex-col to prevent squashing */}
+                            <div className="flex flex-col gap-8" id="trend-analysis-chart-container">
                                 {hasApiTrend && <TrendChart runs={runs} title="API Trend" filterType="api" />}
                                 {hasWebTrend && <TrendChart runs={runs} title="Web Trend" filterType="web" />}
                             </div>

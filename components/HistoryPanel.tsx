@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { TestRun, TestRunSummary, ApiSpecMetadata } from '../types';
-import { SpinnerIcon, GlobeAltIcon, ScaleIcon, ClockIcon, UsersIcon, TrashIcon, PencilSquareIcon, CheckIcon } from './icons';
+import { SpinnerIcon, GlobeAltIcon, ScaleIcon, ClockIcon, UsersIcon, TrashIcon, PencilSquareIcon, CheckIcon, ChevronDownIcon } from './icons';
 import { cleanupDuplicateTestRuns, updateTestRun } from '../services/historyService';
 
 interface HistoryPanelProps {
@@ -197,6 +197,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ isOpen, onClose, history, i
     const [isCleaning, setIsCleaning] = useState(false);
     const [baseUrlFilter, setBaseUrlFilter] = useState<string>('');
     const [apiSpecFilter, setApiSpecFilter] = useState<string>('');
+    const [isSelectionMenuOpen, setIsSelectionMenuOpen] = useState(false);
 
     const uniqueBaseUrls = useMemo(() => {
         const urls = new Set<string>();
@@ -241,8 +242,10 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ isOpen, onClose, history, i
         onRefresh(); // Refresh the list to show the new title
     };
 
-    const handleSelectAll = () => {
-        setSelectedRuns(filteredHistory.map(run => run.id));
+    const handleSelectLatest = (count: number) => {
+        const latestIds = filteredHistory.slice(0, count).map(r => r.id);
+        setSelectedRuns(latestIds);
+        setIsSelectionMenuOpen(false);
     };
 
     const handleUnselectAll = () => {
@@ -344,8 +347,25 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ isOpen, onClose, history, i
                                 <div className="mb-3 flex items-center justify-between">
                                     <p className="text-xs text-gray-400">{selectedRuns.length} of {filteredHistory.length} selected</p>
                                     <div className="flex space-x-2">
-                                        <button onClick={handleSelectAll} className="px-2 py-1 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-md">Select All Visible</button>
-                                        <button onClick={handleUnselectAll} disabled={selectedRuns.length === 0} className="px-2 py-1 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-md disabled:opacity-50">Unselect All</button>
+                                        <div className="relative">
+                                            <button 
+                                                onClick={() => setIsSelectionMenuOpen(!isSelectionMenuOpen)}
+                                                className="flex items-center space-x-1 px-2 py-1 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-md"
+                                            >
+                                                <span>Select Latest...</span>
+                                                <ChevronDownIcon className="w-3 h-3"/>
+                                            </button>
+                                            {isSelectionMenuOpen && (
+                                                <div className="absolute right-0 mt-1 w-32 bg-gray-800 border border-gray-700 rounded-md shadow-lg z-10">
+                                                    <button onClick={() => handleSelectLatest(10)} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700">Latest 10</button>
+                                                    <button onClick={() => handleSelectLatest(20)} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700">Latest 20</button>
+                                                    <button onClick={() => handleSelectLatest(40)} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700">Latest 40</button>
+                                                    <div className="border-t border-gray-700 my-1"></div>
+                                                    <button onClick={() => handleSelectLatest(filteredHistory.length)} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700">Select All</button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <button onClick={handleUnselectAll} disabled={selectedRuns.length === 0} className="px-2 py-1 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-md disabled:opacity-50">Unselect</button>
                                     </div>
                                 </div>
                                 <div className="space-y-3">

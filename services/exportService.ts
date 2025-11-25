@@ -1,4 +1,4 @@
-import type { TestResultSample, LoadTestConfig, TestStats, PerformanceReport, KeyObservation, StructuredSummary, TestRun, TrendAnalysisReport, TestRunSummary, ComparisonAnalysisReport, ComparisonMetricChange } from '../types';
+import type { TestResultSample, LoadTestConfig, TestStats, PerformanceReport, KeyObservation, StructuredSummary, TestRun, TrendAnalysisReport, TestRunSummary, ComparisonAnalysisReport, ComparisonMetricChange, TrendCategoryResult } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
@@ -629,8 +629,9 @@ export const exportTrendAnalysisAsPdf = async (
         }
     };
 
-    // --- NEW: Score Card Drawing Function ---
-    const drawScoreCard = () => {
+    // --- MODIFIED: Score Card Drawing Function to support custom data ---
+    // Now accepts a specific trend result object instead of reading from the main report object.
+    const drawScoreCard = (trend: TrendCategoryResult, title: string) => {
         const cardHeight = 50;
         
         // Light Blue Background
@@ -643,9 +644,9 @@ export const exportTrendAnalysisAsPdf = async (
         const radius = 12;
         
         let gradeColor = [107, 114, 128]; // gray
-        if (report.trendGrade === 'A') gradeColor = [22, 163, 74];
-        else if (report.trendGrade === 'B') gradeColor = [37, 99, 235];
-        else if (report.trendGrade === 'C') gradeColor = [234, 179, 8];
+        if (trend.grade === 'A') gradeColor = [22, 163, 74];
+        else if (trend.grade === 'B') gradeColor = [37, 99, 235];
+        else if (trend.grade === 'C') gradeColor = [234, 179, 8];
         else gradeColor = [220, 38, 38];
 
         // Draw Grade Circle
@@ -658,76 +659,42 @@ export const exportTrendAnalysisAsPdf = async (
         doc.setFontSize(24);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(gradeColor[0], gradeColor[1], gradeColor[2]);
-        doc.text(report.trendGrade, circleX, circleY + 2.5, { align: 'center' });
+        doc.text(trend.grade, circleX, circleY + 2.5, { align: 'center' });
 
         // Info Text
         const textX = circleX + radius + 15;
         doc.setFontSize(14);
         doc.setTextColor(theme.colors.textDark);
-        doc.text('Performance Trend', textX, y + 15);
+        doc.text(title, textX, y + 15);
         
         doc.setFontSize(12);
         doc.setTextColor(gradeColor[0], gradeColor[1], gradeColor[2]);
-        const direction = report.trendDirection;
-        const arrow = direction === 'Improving' ? 'UP' : (direction === 'Degrading' ? 'DOWN' : '-');
-        doc.text(`${direction} (${report.trendScore}/100)`, textX, y + 22);
+        const direction = trend.direction;
+        doc.text(`${direction} (${trend.score}/100)`, textX, y + 22);
 
         // Rationale Box (Right side) - White for contrast against light blue
-        const rationaleX = textX + 60; // Offset for rationale
+        const rationaleX = textX + 80; // Increased offset for wider titles
         const rationaleWidth = CONTENT_WIDTH - (rationaleX - theme.margin) - 5;
         const rationaleHeight = cardHeight - 10;
         
-        doc.setFillColor(255, 255, 255); // White inner box
-        doc.setDrawColor(theme.colors.cardBorder);
-        doc.roundedRect(rationaleX, y + 5, rationaleWidth, rationaleHeight, 2, 2, 'FD');
-        
-        doc.setFontSize(9);
-        doc.setTextColor(theme.colors.textDark);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Rating Rationale:', rationaleX + 4, y + 12);
-        
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(theme.colors.text);
-        const splitRationale = doc.splitTextToSize(report.scoreRationale, rationaleWidth - 8);
-        doc.text(splitRationale, rationaleX + 4, y + 18);
+        // Ensure rationale box doesn't overlap if title is very long or screen is narrow (PDF logic)
+        if (rationaleWidth > 50) {
+            doc.setFillColor(255, 255, 255); // White inner box
+            doc.setDrawColor(theme.colors.cardBorder);
+            doc.roundedRect(rationaleX, y + 5, rationaleWidth, rationaleHeight, 2, 2, 'FD');
+            
+            doc.setFontSize(9);
+            doc.setTextColor(theme.colors.textDark);
+            doc.setFont('helvetica', 'bold');
+            doc.text('Rating Rationale:', rationaleX + 4, y + 12);
+            
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(theme.colors.text);
+            const splitRationale = doc.splitTextToSize(trend.rationale, rationaleWidth - 8);
+            doc.text(splitRationale, rationaleX + 4, y + 18);
+        }
 
         y += cardHeight + 10;
-
-        // Legend (Small row below)
-        const legendY = y;
-        const legendWidth = CONTENT_WIDTH / 5;
-        const legendHeight = 16; // Increased height to fit rubric details
-        const grades = [
-            { g: 'A', range: '90-100', desc: 'Near-Perfect Reliability', criteria: '>99.5%', color: [22, 163, 74] },
-            { g: 'B', range: '80-89', desc: 'Excellent Reliability', criteria: '>98%', color: [37, 99, 235] },
-            { g: 'C', range: '70-79', desc: 'Good Reliability', criteria: '>95%', color: [234, 179, 8] },
-            { g: 'D', range: '60-69', desc: 'Fair Reliability', criteria: '>90%', color: [249, 115, 22] },
-            { g: 'F', range: '0-59', desc: 'Poor Reliability', criteria: '<90%', color: [220, 38, 38] },
-        ];
-
-        grades.forEach((g, i) => {
-            const lx = theme.margin + (i * legendWidth);
-            doc.setFillColor(255, 255, 255);
-            doc.setDrawColor(g.color[0], g.color[1], g.color[2]);
-            doc.roundedRect(lx, legendY, legendWidth - 2, legendHeight, 1, 1, 'FD');
-            
-            doc.setTextColor(g.color[0], g.color[1], g.color[2]);
-            
-            // Line 1: Grade + Range (Bold)
-            doc.setFontSize(8);
-            doc.setFont('helvetica', 'bold');
-            doc.text(`${g.g} (${g.range})`, lx + 2, legendY + 4);
-            
-            // Line 2: Description (Normal, smaller)
-            doc.setFontSize(6);
-            doc.setFont('helvetica', 'normal');
-            doc.text(g.desc, lx + 2, legendY + 8);
-            
-            // Line 3: Criteria (Normal, smaller)
-            doc.text(g.criteria, lx + 2, legendY + 12);
-        });
-        
-        y += legendHeight + 10;
     };
 
     const drawTrendRunCard = (run: TestRunSummary, x: number, yPos: number, width: number, height: number) => {
@@ -842,22 +809,53 @@ export const exportTrendAnalysisAsPdf = async (
     y += 15;
     doc.setFontSize(theme.fontSizes.small); doc.setTextColor(theme.colors.textLight);
     doc.text(`Report Generated: ${new Date().toLocaleString()}`, PAGE_WIDTH / 2, y, { align: 'center' });
+    y += 15;
+
+    // --- MODIFIED: Draw Score Cards Separately ---
+    // Check for specific API/Web trends and draw them individually.
+    let hasDrawnCard = false;
+    if (report.apiTrend) {
+        drawScoreCard(report.apiTrend, "API Performance (Backend)");
+        hasDrawnCard = true;
+    }
+    if (report.webTrend) {
+        drawScoreCard(report.webTrend, "Web Performance (Frontend)");
+        hasDrawnCard = true;
+    }
     
-    // Draw Score Card if grade is available
-    if (report.trendGrade) {
-        y += 15;
-        drawScoreCard();
+    // Legacy fallback if new structure isn't present
+    if (!hasDrawnCard && report.trendGrade) {
+        drawScoreCard({ 
+            grade: report.trendGrade, 
+            score: report.trendScore, 
+            direction: report.trendDirection, 
+            rationale: report.scoreRationale 
+        }, "Performance Trend");
     }
 
     // --- NEW: Trend Chart Capture ---
+    // Since the GUI layout is now vertical, this capture will be tall.
+    // If chartElementId is provided, we use it.
     if (chartElementId) {
         const chartData = await getChartImageData(chartElementId);
         if (chartData.height > 0) {
+            // If image is very tall (vertical stacking), check page break carefully
             checkPageBreak(chartData.height + 25);
             y += 10;
             drawSectionHeader('Metric Progression');
-            doc.addImage(chartData.dataUrl, 'PNG', theme.margin, y, CONTENT_WIDTH, chartData.height);
-            y += chartData.height + 10;
+            
+            // If the image is taller than remaining space on a FRESH page, 
+            // we might need to scale it down or just let it overflow (jsPDF doesn't auto-split images).
+            // However, 2 charts stacked usually fit on A4 if it's the main content.
+            if (chartData.height > (PAGE_HEIGHT - theme.margin * 2 - 40)) {
+                 // If too tall for a single page, scale it to fit
+                 const maxHeight = PAGE_HEIGHT - theme.margin * 2 - 40;
+                 doc.addImage(chartData.dataUrl, 'PNG', theme.margin, y, CONTENT_WIDTH, maxHeight);
+                 y += maxHeight + 10;
+            } else {
+                 doc.addImage(chartData.dataUrl, 'PNG', theme.margin, y, CONTENT_WIDTH, chartData.height);
+                 y += chartData.height + 10;
+            }
         }
     }
 
@@ -901,7 +899,7 @@ export const exportTrendAnalysisAsPdf = async (
     drawTextBlock(report.performanceThreshold || 'N/A', { bgColor: theme.colors.warningBg, borderColor: theme.colors.warningBorder, textColor: theme.colors.warningText });
     
     // Visual Summary Grid
-    const cardHeight = 85; // Increased height for new design
+    const cardHeight = 85; 
     checkPageBreak(24 + cardHeight + 5);
     drawSectionHeader('Visual Summary');
     const cardWidth = (CONTENT_WIDTH - 5) / 2;
@@ -909,11 +907,8 @@ export const exportTrendAnalysisAsPdf = async (
     let cardX = theme.margin;
     for (let i = 0; i < sortedRuns.length; i++) {
         checkPageBreak(cardHeight + 5);
-        // Reset X for new rows (i even -> left, i odd -> right)
         cardX = (i % 2 === 0) ? theme.margin : theme.margin + cardWidth + 5;
         drawTrendRunCard(sortedRuns[i], cardX, y, cardWidth, cardHeight);
-        
-        // Increment Y only after drawing the second card in a row or if it's the last card
         if (i % 2 !== 0 || i === sortedRuns.length - 1) { 
             y += cardHeight + 5; 
         }
@@ -933,15 +928,31 @@ export const exportTrendAnalysisAsPdf = async (
         y += lines.length * LINE_HEIGHT + 2;
     });
 
+    // --- MODIFIED: Separated Root Cause and Recommendations ---
     const causeHeight = calculateTextBlockHeight(report.rootCauseSuggestion || 'N/A');
-    drawSectionHeader('Suggested Root Cause & Recommendations', causeHeight);
+    drawSectionHeader('Suggested Root Cause', causeHeight);
     drawTextBlock(report.rootCauseSuggestion || 'N/A');
-    y+=4;
+    
+    y += 10; // Explicit spacing gap
+
+    // Recommendations Header
+    const recsHeaderHeight = 24;
+    checkPageBreak(recsHeaderHeight + 20);
+    doc.setFontSize(theme.fontSizes.h1); 
+    doc.setFont('helvetica', 'bold'); 
+    doc.setTextColor(theme.colors.textDark);
+    doc.text('Recommendations', theme.margin, y);
+    y += 6;
+    doc.setDrawColor(theme.colors.border);
+    doc.line(theme.margin, y, PAGE_WIDTH - theme.margin, y);
+    y += 8;
+
     (report.recommendations ?? []).forEach((rec, i) => {
         const text = `${i + 1}. ${rec}`;
         const lines = doc.splitTextToSize(text, CONTENT_WIDTH - 5);
         checkPageBreak(lines.length * LINE_HEIGHT + 4);
         doc.setFontSize(theme.fontSizes.body);
+        doc.setTextColor(theme.colors.text);
         doc.text(lines, theme.margin + 5, y, {});
         y += lines.length * LINE_HEIGHT + 2;
     });

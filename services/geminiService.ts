@@ -41,24 +41,14 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 
 /**
  * Helper to strip HTML tags from a string.
- * Used to clean up HTML error responses so the AI focuses on the text content.
  */
 function stripHtml(html: string): string {
     if (!html) return '';
-    // Basic regex strip to avoid DOM overhead/security issues in non-browser envs (though this is client-side).
-    // It replaces tags with a space to prevent words merging.
     let text = html.replace(/<[^>]*>?/gm, ' ');
-    // Decode common entities
     text = text.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-    // Collapse whitespace
     return text.replace(/\s+/g, ' ').trim();
 }
 
-
-/**
- * Executes a single request for a virtual user, including diagnostics and assertions.
- * This function contains the core logic of making one API call.
- */
 async function virtualUserSingleRequest(
   config: LoadTestConfig,
   onResult: (result: TestResultSample) => void,
@@ -67,288 +57,263 @@ async function virtualUserSingleRequest(
   requestIndex?: number,
   virtualUserId?: number
 ) {
-  if (signal.aborted) return; // Prevent starting new requests if the test is already stopped.
+    if (signal.aborted) return;
 
-  // Generate IDs early for tracing
-  const requestId = crypto.randomUUID();
-  const vuId = virtualUserId !== undefined ? `vu-${virtualUserId}` : 'vu-unknown';
+    const requestId = crypto.randomUUID();
+    const vuId = virtualUserId !== undefined ? `vu-${virtualUserId}` : 'vu-unknown';
 
-  // --- CACHE BUSTING LOGIC ---
-  // We intentionally append a unique nonce AND a timestamp to the URL. 
-  // This forces every single request to be treated as unique by browsers, proxies, load balancers, and CDNs.
-  // We also handle relative URLs gracefully by using window.location.origin as a base if needed.
-  let targetUrl = config.url;
-  try {
-      const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
-      const urlObj = new URL(targetUrl, base);
-      urlObj.searchParams.set('_nonce', requestId);
-      urlObj.searchParams.set('_ts', Date.now().toString()); // Add timestamp for absolute ordering/uniqueness
-      targetUrl = urlObj.href;
-  } catch (e) {
-      console.warn("Failed to append cache-buster nonce to URL:", targetUrl);
-  }
-
-  const targetMethod = config.method;
-  let targetBody = config.body;
-
-  // Handle data-driven mode
-  if (dataContext) {
-      const index = dataContext.getNextIndex();
-      
-      if (config.dataDrivenMode === 'strict' && index >= dataContext.data.length) {
-          return; // No more data, this "request" is a no-op.
-      }
-      
-      const record = dataContext.data[index % dataContext.data.length]; // Loop mode is handled by modulo
-      targetBody = JSON.stringify(record);
-  }
-
-  // Handle dynamic ID injection and Body Tracing
-  if (targetBody) {
+    let targetUrl = config.url;
     try {
-      const bodyJson = JSON.parse(targetBody);
-      let modified = false;
-
-      // --- ROBUSTNESS FIX: Body Trace Injection ---
-      // Inject hidden metadata fields to ensure the request body bytes are strictly unique.
-      // This prevents aggressive WAFs or proxies from deduplicating requests based on identical body hashes.
-      // Most APIs simply ignore unknown fields.
-      if (typeof bodyJson === 'object' && bodyJson !== null && !Array.isArray(bodyJson)) {
-          bodyJson._trace_id = requestId;
-          bodyJson._trace_ts = Date.now();
-          modified = true;
-      }
-
-      // Priority 1: ID Pooling from file
-      if (config.idPool && config.idPool.length > 0) {
-          const pool = config.idPool;
-          let idFromPool: string;
-
-          if (config.idPoolingMode === 'random') {
-              idFromPool = pool[Math.floor(Math.random() * pool.length)];
-          } else { // 'sequential' is the default
-              idFromPool = pool[(requestIndex || 0) % pool.length];
-          }
-          
-          if (bodyJson.ncosId !== undefined) {
-              bodyJson.ncosId = idFromPool;
-              modified = true;
-          }
-          if (bodyJson.id !== undefined) {
-              bodyJson.id = idFromPool;
-              modified = true;
-          }
-      // Priority 2: Auto-Incrementing (if enabled)
-      } else if (config.isIdAutoIncrementEnabled !== false) {
-            bodyJson.id = crypto.randomUUID();
-            modified = true;
-      }
-      
-      if (modified) {
-        targetBody = JSON.stringify(bodyJson);
-      }
+        const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+        const urlObj = new URL(targetUrl, base);
+        urlObj.searchParams.set('_nonce', requestId);
+        urlObj.searchParams.set('_ts', Date.now().toString());
+        targetUrl = urlObj.href;
     } catch (e) {
-      // If body is not JSON, we simply skip injection.
-    }
-  }
-
-  // --- DISCREPANCY FIX: Strict Abort Check ---
-  // Check if the signal has aborted *after* preparation but *before* the network call.
-  // If we abort here, we return silently. This prevents "phantom" requests that the frontend
-  // counts (as failed/aborted) but the backend never received because they never left the browser.
-  if (signal.aborted) return;
-
-  const startTime = performance.now();
-  let success = false;
-  let statusCode = 0;
-  let statusText = '';
-  let errorDetails: string | undefined = undefined;
-  let responseBody: string | undefined = undefined;
-
-  try {
-    const fetchOptions: RequestInit & { priority?: 'high' | 'low' | 'auto' } = {
-      method: targetMethod,
-      signal,
-      cache: 'no-store', // CRITICAL: Disable browser caching
-      priority: 'high',  // Hint to browser to prioritize these requests (fixes background tab throttling)
-      headers: {
-          // Inject tracing headers to correlate frontend requests with backend logs
-          'X-Request-ID': requestId,
-          'X-Virtual-User-ID': vuId,
-          // Explicitly tell intermediate proxies not to cache
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0'
-      },
-    };
-
-    // Add custom headers from config first
-    if (config.headers) {
-      for (const header of config.headers) {
-          if (header.enabled && header.key) {
-              (fetchOptions.headers as Record<string, string>)[header.key] = header.value;
-          }
-      }
+        console.warn("Failed to append cache-buster nonce to URL:", targetUrl);
     }
 
-    if (['POST', 'PUT', 'PATCH'].includes(targetMethod) && targetBody) {
-      (fetchOptions.headers as Record<string, string>)['Content-Type'] = 'application/json';
-      fetchOptions.body = targetBody;
+    const targetMethod = config.method;
+    let targetBody = config.body;
+
+    if (dataContext) {
+        const index = dataContext.getNextIndex();
+        if (config.dataDrivenMode === 'strict' && index >= dataContext.data.length) {
+            return; 
+        }
+        const record = dataContext.data[index % dataContext.data.length]; 
+        targetBody = JSON.stringify(record);
     }
-    
-    if (config.authToken) {
-      let authHeaderValue = config.authToken;
-      if (!/^bearer /i.test(authHeaderValue)) {
-          authHeaderValue = `Bearer ${authHeaderValue}`;
-      }
-      (fetchOptions.headers as Record<string, string>)['Authorization'] = authHeaderValue;
-    }
-    
-    let response;
-    if (config.useCorsProxy) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          throw new Error("Not logged in. A user session is required to use the CORS proxy function.");
+
+    if (targetBody) {
+        try {
+        const bodyJson = JSON.parse(targetBody);
+        let modified = false;
+
+        if (typeof bodyJson === 'object' && bodyJson !== null && !Array.isArray(bodyJson)) {
+            bodyJson._trace_id = requestId;
+            bodyJson._trace_ts = Date.now();
+            modified = true;
         }
 
-        const functionsUrl = `${supabaseUrl}/functions/v1/cors-proxy`;
+        if (config.idPool && config.idPool.length > 0) {
+            const pool = config.idPool;
+            let idFromPool: string;
+            if (config.idPoolingMode === 'random') {
+                idFromPool = pool[Math.floor(Math.random() * pool.length)];
+            } else { 
+                idFromPool = pool[(requestIndex || 0) % pool.length];
+            }
+            
+            if (bodyJson.ncosId !== undefined) {
+                bodyJson.ncosId = idFromPool;
+                modified = true;
+            }
+            if (bodyJson.id !== undefined) {
+                bodyJson.id = idFromPool;
+                modified = true;
+            }
+        } else if (config.isIdAutoIncrementEnabled !== false) {
+                bodyJson.id = crypto.randomUUID();
+                modified = true;
+        }
+        
+        if (modified) {
+            targetBody = JSON.stringify(bodyJson);
+        }
+        } catch (e) { }
+    }
 
-        const proxyOptions: any = {
-            method: fetchOptions.method,
-            headers: fetchOptions.headers,
-            body: fetchOptions.body,
+    if (signal.aborted) return;
+
+    const startTime = performance.now();
+    let success = false;
+    let statusCode = 0;
+    let statusText = '';
+    let errorDetails: string | undefined = undefined;
+    let responseBody: string | undefined = undefined;
+
+    try {
+        const fetchOptions: RequestInit & { priority?: 'high' | 'low' | 'auto' } = {
+        method: targetMethod,
+        signal,
+        cache: 'no-store',
+        priority: 'high',
+        headers: {
+            'X-Request-ID': requestId,
+            'X-Virtual-User-ID': vuId,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        },
         };
 
-        response = await fetch(functionsUrl, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${session.access_token}`,
-                'Content-Type': 'application/json',
-                'apikey': supabaseAnonKey,
-            },
-            body: JSON.stringify({
-                url: targetUrl, // Proxy handles the cache busting URL
-                options: proxyOptions
-            }),
-            signal,
-        });
-    } else {
-      response = await fetch(targetUrl, fetchOptions);
-    }
-
-    const responseText = await response.text();
-    responseBody = responseText;
-
-    statusCode = response.status;
-    statusText = response.statusText;
-    success = response.ok;
-    
-    if (!success) {
-      errorDetails = `Server responded with a non-successful status code.`;
-    }
-
-  } catch (err) {
-    success = false;
-    statusCode = 0;
-    statusText = 'Client Error';
-     if (err instanceof Error) {
-        if (err.name === 'AbortError') {
-           statusText = 'Aborted';
-           errorDetails = `Request was aborted by the test runner.`;
-        } else if (err.message.includes('Failed to fetch')) {
-           statusText = 'Network Error';
-           errorDetails = `Network Error: ${err.message}. This usually indicates the connection was dropped or refused by the server.`;
-        } else {
-           errorDetails = err.message;
+        if (config.headers) {
+        for (const header of config.headers) {
+            if (header.enabled && header.key) {
+                (fetchOptions.headers as Record<string, string>)[header.key] = header.value;
+            }
         }
-    } else {
-        errorDetails = 'An unknown network error occurred.';
+        }
+
+        if (['POST', 'PUT', 'PATCH'].includes(targetMethod) && targetBody) {
+        (fetchOptions.headers as Record<string, string>)['Content-Type'] = 'application/json';
+        fetchOptions.body = targetBody;
+        }
+        
+        if (config.authToken) {
+        let authHeaderValue = config.authToken;
+        if (!/^bearer /i.test(authHeaderValue)) {
+            authHeaderValue = `Bearer ${authHeaderValue}`;
+        }
+        (fetchOptions.headers as Record<string, string>)['Authorization'] = authHeaderValue;
+        }
+        
+        let response;
+        if (config.useCorsProxy) {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) {
+            throw new Error("Not logged in. A user session is required to use the CORS proxy function.");
+            }
+
+            const functionsUrl = `${supabaseUrl}/functions/v1/cors-proxy`;
+
+            const proxyOptions: any = {
+                method: fetchOptions.method,
+                headers: fetchOptions.headers,
+                body: fetchOptions.body,
+            };
+
+            response = await fetch(functionsUrl, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${session.access_token}`,
+                    'Content-Type': 'application/json',
+                    'apikey': supabaseAnonKey,
+                },
+                body: JSON.stringify({
+                    url: targetUrl, 
+                    options: proxyOptions
+                }),
+                signal,
+            });
+        } else {
+        response = await fetch(targetUrl, fetchOptions);
+        }
+
+        const responseText = await response.text();
+        responseBody = responseText;
+
+        statusCode = response.status;
+        statusText = response.statusText;
+        success = response.ok;
+        
+        if (!success) {
+        errorDetails = `Server responded with a non-successful status code.`;
+        }
+
+    } catch (err) {
+        success = false;
+        statusCode = 0;
+        statusText = 'Client Error';
+        if (err instanceof Error) {
+            if (err.name === 'AbortError') {
+            statusText = 'Aborted';
+            errorDetails = `Request was aborted by the test runner.`;
+            } else if (err.message.includes('Failed to fetch')) {
+            statusText = 'Network Error';
+            errorDetails = `Network Error: ${err.message}. This usually indicates the connection was dropped or refused by the server.`;
+            } else {
+            errorDetails = err.message;
+            }
+        } else {
+            errorDetails = 'An unknown network error occurred.';
+        }
     }
-  }
-  const endTime = performance.now();
-  const latency = endTime - startTime;
+    const endTime = performance.now();
+    const latency = endTime - startTime;
 
-  let networkTimings: NetworkTimings | undefined = undefined;
-  if (config.networkDiagnosticsEnabled) {
-      await new Promise(resolve => setTimeout(resolve, 0)); // Wait for performance entry
-      const entries = performance.getEntriesByName(targetUrl, 'resource');
-      if (entries.length > 0) {
-          const perfEntry = entries[entries.length - 1] as PerformanceResourceTiming;
-          if (perfEntry) {
-              networkTimings = {
-                  dns: perfEntry.domainLookupEnd - perfEntry.domainLookupStart,
-                  tcp: perfEntry.connectEnd - perfEntry.connectStart,
-                  tls: (perfEntry.secureConnectionStart > 0) ? (perfEntry.connectEnd - perfEntry.secureConnectionStart) : 0,
-                  ttfb: perfEntry.responseStart - perfEntry.requestStart,
-                  download: perfEntry.responseEnd - perfEntry.responseStart,
-                  total: perfEntry.duration
-              };
-          }
-      }
-  }
+    let networkTimings: NetworkTimings | undefined = undefined;
+    if (config.networkDiagnosticsEnabled) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const entries = performance.getEntriesByName(targetUrl, 'resource');
+        if (entries.length > 0) {
+            const perfEntry = entries[entries.length - 1] as PerformanceResourceTiming;
+            if (perfEntry) {
+                networkTimings = {
+                    dns: perfEntry.domainLookupEnd - perfEntry.domainLookupStart,
+                    tcp: perfEntry.connectEnd - perfEntry.connectStart,
+                    tls: (perfEntry.secureConnectionStart > 0) ? (perfEntry.connectEnd - perfEntry.secureConnectionStart) : 0,
+                    ttfb: perfEntry.responseStart - perfEntry.requestStart,
+                    download: perfEntry.responseEnd - perfEntry.responseStart,
+                    total: perfEntry.duration
+                };
+            }
+        }
+    }
 
-  const assertionResults: AssertionResult[] = [];
-  if (config.assertions && config.assertions.length > 0) {
-      for (const assertion of config.assertions) {
-          let passed = false;
-          let actualValue: string | number = 'N/A';
-          let description = '';
+    const assertionResults: AssertionResult[] = [];
+    if (config.assertions && config.assertions.length > 0) {
+        for (const assertion of config.assertions) {
+            let passed = false;
+            let actualValue: string | number = 'N/A';
+            let description = '';
 
-          try {
-              switch (assertion.metric) {
-                  case 'latency':
-                      actualValue = Math.round(latency);
-                      const expectedLatency = Number(assertion.value);
-                      if (!isNaN(expectedLatency)) {
-                          if (assertion.operator === 'lessThan') passed = latency < expectedLatency;
-                          else if (assertion.operator === 'greaterThan') passed = latency > expectedLatency;
-                      }
-                      description = `Latency should be ${assertion.operator === 'lessThan' ? '<' : '>'} ${assertion.value}ms. Actual: ${actualValue}ms.`;
-                      break;
-                  
-                  case 'responseBody':
-                      actualValue = responseBody || '';
-                      const expectedText = String(assertion.value);
-                      if (assertion.operator === 'contains') passed = (responseBody || '').includes(expectedText);
-                      else if (assertion.operator === 'notContains') passed = !(responseBody || '').includes(expectedText);
-                      description = `Response body should ${assertion.operator} "${assertion.value}".`;
-                      break;
-              }
-          } catch (e) {
-              passed = false;
-              description = `Error evaluating assertion: ${e instanceof Error ? e.message : 'Unknown error'}`;
-          }
+            try {
+                switch (assertion.metric) {
+                    case 'latency':
+                        actualValue = Math.round(latency);
+                        const expectedLatency = Number(assertion.value);
+                        if (!isNaN(expectedLatency)) {
+                            if (assertion.operator === 'lessThan') passed = latency < expectedLatency;
+                            else if (assertion.operator === 'greaterThan') passed = latency > expectedLatency;
+                        }
+                        description = `Latency should be ${assertion.operator === 'lessThan' ? '<' : '>'} ${assertion.value}ms. Actual: ${actualValue}ms.`;
+                        break;
+                    
+                    case 'responseBody':
+                        actualValue = responseBody || '';
+                        const expectedText = String(assertion.value);
+                        if (assertion.operator === 'contains') passed = (responseBody || '').includes(expectedText);
+                        else if (assertion.operator === 'notContains') passed = !(responseBody || '').includes(expectedText);
+                        description = `Response body should ${assertion.operator} "${assertion.value}".`;
+                        break;
+                }
+            } catch (e) {
+                passed = false;
+                description = `Error evaluating assertion: ${e instanceof Error ? e.message : 'Unknown error'}`;
+            }
 
-          assertionResults.push({
-              assertionId: assertion.id,
-              passed,
-              actualValue,
-              expectedValue: assertion.value,
-              metric: assertion.metric,
-              operator: assertion.operator,
-              description,
-          });
-      }
-  }
+            assertionResults.push({
+                assertionId: assertion.id,
+                passed,
+                actualValue,
+                expectedValue: assertion.value,
+                metric: assertion.metric,
+                operator: assertion.operator,
+                description,
+            });
+        }
+    }
 
-  const allAssertionsPassed = assertionResults.length > 0 ? assertionResults.every(ar => ar.passed) : true;
-  const finalSuccess = success && allAssertionsPassed;
+    const allAssertionsPassed = assertionResults.length > 0 ? assertionResults.every(ar => ar.passed) : true;
+    const finalSuccess = success && allAssertionsPassed;
 
-  onResult({
-    id: requestId, // Correlate this ID with X-Request-ID in backend logs
-    timestamp: Date.now(),
-    latency: latency,
-    success: finalSuccess,
-    statusCode: statusCode,
-    statusText: statusText,
-    errorDetails: errorDetails,
-    url: targetUrl, // Report the original URL, not the proxied one
-    method: targetMethod,
-    requestBody: targetBody,
-    responseBody: responseBody,
-    assertionResults: assertionResults,
-    networkTimings,
-  });
+    onResult({
+        id: requestId,
+        timestamp: Date.now(),
+        latency: latency,
+        success: finalSuccess,
+        statusCode: statusCode,
+        statusText: statusText,
+        errorDetails: errorDetails,
+        url: targetUrl, 
+        method: targetMethod,
+        requestBody: targetBody,
+        responseBody: responseBody,
+        assertionResults: assertionResults,
+        networkTimings,
+    });
 }
 
 export async function runLoadTest(
@@ -380,7 +345,7 @@ export async function runLoadTest(
                         console.error('Resource monitor poll failed:', e);
                     }
                 }
-            }, 2000); // Poll every 2 seconds
+            }, 2000); 
 
             softStopSignal.addEventListener('abort', () => {
                 clearInterval(intervalId);
@@ -388,7 +353,6 @@ export async function runLoadTest(
             });
         }
         
-        // --- ITERATION MODE (Worker Pool) ---
         if (config.runMode === 'iterations') {
             const iterationCounter = {
                 i: 0,
@@ -428,7 +392,6 @@ export async function runLoadTest(
             const workers = Array.from({ length: config.users }, (_, i) => worker(i));
             await Promise.all(workers);
         } 
-        // --- DURATION MODE (Continuous Runners) ---
         else {
             const dataContext = (config.dataDrivenBody && config.dataDrivenBody.length > 0)
                 ? { data: config.dataDrivenBody, getNextIndex: (() => { let i = -1; return () => { i++; return i; } })() }
@@ -470,7 +433,7 @@ export async function runLoadTest(
                       await abortableSleep(rampUpInterval, softStopSignal);
                     }
                 }
-            } else { // stair-step
+            } else { 
                 let currentUsers = 0;
                 const stepCount = Math.floor(config.duration / config.stepDuration);
                 
@@ -508,7 +471,7 @@ export async function runLoadTest(
 }
 
 export async function getAnalysis(config: LoadTestConfig, stats: TestStats): Promise<PerformanceReport> {
-  let jsonText = '';
+    let jsonText = '';
   try {
     const client = getAiClient();
     const isApiScan = config.url === 'API-wide scan';
@@ -652,7 +615,7 @@ export async function getAnalysis(config: LoadTestConfig, stats: TestStats): Pro
 }
 
 export async function getFailureAnalysis(config: LoadTestConfig, stats: TestStats, testRunnerError: string | null): Promise<FailureAnalysisReport> {
-  let jsonText = '';
+    let jsonText = '';
   try {
     const client = getAiClient();
     const isApiScan = config.url === 'API-wide scan';
@@ -792,8 +755,10 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
     const grandTotalSuccess = sortedRuns.reduce((acc, run) => acc + (Number(run.stats?.successCount) || 0), 0);
 
     // Split runs into two categories based on Method
-    const apiRuns = sortedRuns.filter(r => r.config.method !== 'GET' && r.config.method !== 'HEAD');
-    const webRuns = sortedRuns.filter(r => r.config.method === 'GET' || r.config.method === 'HEAD');
+    // Safety check: ensure r.config exists and has method before checking
+    const apiRuns = sortedRuns.filter(r => r.config?.method && r.config.method !== 'GET' && r.config.method !== 'HEAD');
+    // Default to webRuns if method is missing or is GET/HEAD
+    const webRuns = sortedRuns.filter(r => !r.config?.method || r.config.method === 'GET' || r.config.method === 'HEAD');
 
     // Helper to calculate grade for a group
     const getGroupMetrics = (group: TestRunSummary[]) => {
@@ -824,12 +789,13 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
         let runContext = `${config.users} Users, ${config.duration}s`;
         if (config.loadProfile === 'stair-step') runContext += `, Stair-Step`;
         
-        return `Run ${index + 1} [${run.config.method}] [${run.title || 'Untitled'}]: Avg Latency=${avgResponseTime.toFixed(0)}ms, Success=${successRate.toFixed(2)}%, Throughput=${throughput.toFixed(1)}/s. (${runContext})`;
+        return `Run ${index + 1} [${config.method || 'UNKNOWN'}] [${run.title || 'Untitled'}]: Avg Latency=${avgResponseTime.toFixed(0)}ms, Success=${successRate.toFixed(2)}%, Throughput=${throughput.toFixed(1)}/s. (${runContext})`;
     };
 
     const apiRunData = apiRuns.map((r, i) => formatRun(r, i)).join('\n');
     const webRunData = webRuns.map((r, i) => formatRun(r, i)).join('\n');
 
+    // UPDATED PROMPT: More explicit request for concise, non-fluff summary and threshold details.
     const userPrompt = `
       Analyze the following ${runs.length} test runs. Separately analyze "API Transaction Tests" (Backend) and "Web/GET Tests" (Frontend).
 
@@ -844,13 +810,14 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
       - Grand Total Success: ${grandTotalSuccess.toLocaleString()}
 
       **Analysis Requirements:**
-      1. **Differentiate:** Clearly distinguish between the two types of tests in your summary. An 'A' on a simple GET test is easier to achieve than an 'A' on a complex POST transaction.
+      1. **Differentiate:** Clearly distinguish between the two types of tests in your summary.
       2. **API Trend (if applicable):** Analyze the trend for the API runs.
          - MANDATORY GRADE: The latest API run success rate implies a Grade of **${apiMetrics?.grade ?? 'N/A'}** (${apiMetrics?.score ?? 0}). Use this exactly in the 'apiTrend' object.
       3. **Web Trend (if applicable):** Analyze the trend for the Web runs.
          - MANDATORY GRADE: The latest Web run success rate implies a Grade of **${webMetrics?.grade ?? 'N/A'}** (${webMetrics?.score ?? 0}). Use this exactly in the 'webTrend' object.
-      4. **Overall:** Provide a high-level summary in 'overallTrendSummary' that mentions both aspects if present.
-      5. **Conclusion:** In 'conclusiveSummary', mention the **Grand Total Successful Submissions** (${grandTotalSuccess.toLocaleString()}) to emphasize the scale of testing.
+      4. **Overall Summary:** Provide a concise, detailed executive summary (approx 4-5 sentences). Focus strictly on the correlation between user load, latency, and error rates. Do not use marketing fluff or generic phrases. Be direct and technical.
+      5. **Performance Threshold:** Identify the exact user load where performance degrades (if any). Be specific (e.g., "Performance remains stable up to 120 users, after which latency spikes").
+      6. **Conclusion:** In 'conclusiveSummary', mention the **Grand Total Successful Submissions** (${grandTotalSuccess.toLocaleString()}) to emphasize the scale of testing.
 
       **JSON Output:**
       Produce a JSON object matching the schema.
@@ -920,7 +887,8 @@ export async function refineTrendAnalysis(
         // Basic summary for context
         const summaryData = runs.map((run, index) => {
              const stats: Partial<TestStats> = run.stats || {};
-             return `Run ${index+1} [${run.config.method}]: ${Number(stats.totalRequests)} reqs, ${Number(stats.errorCount)} errors.`;
+             const config = (run.config || {}) as Partial<LoadTestConfig>;
+             return `Run ${index+1} [${config.method || 'UNKNOWN'}]: ${Number(stats.totalRequests)} reqs, ${Number(stats.errorCount)} errors.`;
         }).join('\n');
 
         const userPrompt = `
@@ -1183,9 +1151,6 @@ export async function generateAndValidatePersonalizedData(
     useCorsProxy: boolean,
     headers: Header[]
 ): Promise<string> {
-    // Simulating bulk data generation. In a real scenario, this would use Gemini to generate variations 
-    // and validate a sample.
-    // For now, let's implement a simplified version that generates a list of payloads based on basePayload template.
     
     onLog("Starting batch generation...");
     const client = getAiClient();
@@ -1217,11 +1182,6 @@ export async function generateAndValidatePersonalizedData(
     
     onLog("Sample valid. Generating full batch...");
     
-    // For the full batch, we might just duplicate the sample or ask AI for more. 
-    // Given context limits, let's generate a moderate amount or just return the sample repeated with some ID variation if possible.
-    // Since this is a 'fix errors' task, I'll stick to the requested signature implementation.
-    
-    // Let's ask AI to generate the actual data for the requests
     let fullData: any[] = [];
     
     for (const req of requests) {
