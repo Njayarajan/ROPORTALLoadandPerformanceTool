@@ -1,4 +1,3 @@
-
 import type { TestResultSample, LoadTestConfig, TestStats, PerformanceReport, KeyObservation, StructuredSummary, TestRun, TrendAnalysisReport, TestRunSummary, ComparisonAnalysisReport, ComparisonMetricChange, TrendCategoryResult } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -405,7 +404,7 @@ export const exportAsPdf = async (
     }
 
     // --- VISUALIZATIONS & DEEP DIVES ---
-    const timelineExplanation = "This chart visualizes the relationship between user load and application performance over the duration of the test. Key elements are:\n  • Virtual Users (Green Line): Represents the simulated concurrent user load on the system.\n  • Average Latency (Blue Line): Tracks the average response time. An upward trend correlated with user load suggests potential scalability issues.\n  • Latency Range (Orange Area): Shows the delta between minimum and maximum response times. A wide or expanding area signifies performance inconsistency.\n  • Errors (Red Bars): Indicates the percentage of failed requests. Spikes in errors, especially at peak load, often point to resource exhaustion or system limits.";
+    const timelineExplanation = `This chart visualizes the relationship between user load and application performance over the duration of the test. Key elements are:\n  • Virtual Users (Green Line): Represents the simulated concurrent user load on the system.\n  • Average Latency (Blue Line): Tracks the average response time. An upward trend correlated with user load suggests potential scalability issues.\n  • Latency Range (Orange Area): Shows the delta between minimum and maximum response times. A wide or expanding area signifies performance inconsistency.\n  • Errors (Red Bars): Indicates the percentage of failed requests. Spikes in errors, especially at peak load, often point to resource exhaustion or system limits.`;
     const timelineChartData = await getChartImageData('response-time-chart-container');
     const timelineSectionHeight = (LINE_HEIGHT * 7) + calculateExplanationTextHeight(timelineExplanation) + calculateStructuredSummaryHeight(report?.timelineSummary) + timelineChartData.height;
     
@@ -424,7 +423,7 @@ export const exportAsPdf = async (
     }
     
     if (stats.avgNetworkTimings && chartElementIds.includes('network-timing-chart-for-pdf')) {
-        const networkExplanation = "This chart breaks down the total response time into its constituent network phases, helping to isolate bottlenecks.\n  • DNS, TCP, TLS: These initial phases represent connection setup. They are typically fast. 0ms indicates a cached or reused connection.\n  • TTFB (Time to First Byte): This is the most critical metric here. It measures the server's 'think time'—the duration from when the request is sent until the first byte of the response is received. A high TTFB is a strong indicator of a backend bottleneck (e.g., slow database, complex logic).\n  • Download: The time taken to receive the full response payload. A high value suggests large response sizes or network bandwidth limitations.";
+        const networkExplanation = `This chart breaks down the total response time into its constituent network phases, helping to isolate bottlenecks.\n  • DNS, TCP, TLS: These initial phases represent connection setup. They are typically fast. 0ms indicates a cached or reused connection.\n  • TTFB (Time to First Byte): This is the most critical metric here. It measures the server's 'think time'—the duration from when the request is sent until the first byte of the response is received. A high TTFB is a strong indicator of a backend bottleneck (e.g., slow database, complex logic).\n  • Download: The time taken to receive the full response payload. A high value suggests large response sizes or network bandwidth limitations.`;
         const networkChartData = await getChartImageData('network-timing-chart-for-pdf');
         const networkSectionHeight = (LINE_HEIGHT * 7) + calculateExplanationTextHeight(networkExplanation) + calculateStructuredSummaryHeight(report?.networkSummary) + networkChartData.height;
         
@@ -443,7 +442,7 @@ export const exportAsPdf = async (
         }
     }
     
-    const latencyExplanation = "This section details the distribution of response times, a critical factor in user experience.\n  • Min/Avg/Max Response Time: These show the best, average, and worst-case performance observed. A large gap between the average and maximum values indicates that while the system is fast on average, some users are experiencing significant delays.\n  • Standard Deviation & Consistency (CV): These are statistical measures of variability. High values indicate an unpredictable and unreliable user experience, even if the average response time seems acceptable.";
+    const latencyExplanation = `This section details the distribution of response times, a critical factor in user experience.\n  • Min/Avg/Max Response Time: These show the best, average, and worst-case performance observed. A large gap between the average and maximum values indicates that while the system is fast on average, some users are experiencing significant delays.\n  • Standard Deviation & Consistency (CV): These are statistical measures of variability. High values indicate an unpredictable and unreliable user experience, even if the average response time seems acceptable.`;
     const latencySectionHeight = (LINE_HEIGHT * 7) + calculateExplanationTextHeight(latencyExplanation) + calculateStructuredSummaryHeight(report?.latencySummary) + 80;
     
     if(y + latencySectionHeight > PAGE_HEIGHT - theme.margin) {
@@ -475,7 +474,7 @@ export const exportAsPdf = async (
     y += LINE_HEIGHT * 2;
 
     if (stats.errorCount > 0) {
-        const errorExplanation = "This section categorizes all failed requests, helping to pinpoint the root cause of failures.\n  • 'Request Timeout': The client gave up waiting for a response. This often points to long-running database queries, deadlocks, or an overwhelmed application server.\n  • 'Network Error': The client failed to establish a connection. Under load, this strongly suggests the server is saturated and refusing new connections due to resource limits (e.g., connection pool, process limits).\n  • 'HTTP 5xx Errors': These are definitive server-side errors (e.g., 500 Internal Server Error, 503 Service Unavailable) indicating application crashes or that the service is not healthy.";
+        const errorExplanation = `This section categorizes all failed requests, helping to pinpoint the root cause of failures.\n  • 'Request Timeout': The client gave up waiting for a response. This often points to long-running database queries, deadlocks, or an overwhelmed application server.\n  • 'Network Error': The client failed to establish a connection. Under load, this strongly suggests the server is saturated and refusing new connections due to resource limits (e.g., connection pool, process limits).\n  • 'HTTP 5xx Errors': These are definitive server-side errors (e.g., 500 Internal Server Error, 503 Service Unavailable) indicating application crashes or that the service is not healthy.`;
         const sortedErrors = Object.entries(stats.errorDistribution).sort(([, a], [, b]) => b - a);
         const errorSectionHeight = (LINE_HEIGHT * 7) + calculateExplanationTextHeight(errorExplanation) + calculateStructuredSummaryHeight(report?.errorSummary) + (sortedErrors.length * 23) + (LINE_HEIGHT * 4);
 
@@ -558,6 +557,7 @@ export const exportComparisonAsPdf = async (
         head: [['Metric', `Baseline: ${runA.title}`, `Comparison: ${runB.title}`]],
         body: [
             ['Date', new Date(runA.created_at).toLocaleDateString(), new Date(runB.created_at).toLocaleDateString()],
+            ['Method', runA.config.method || '-', runB.config.method || '-'],
             ['Users', runA.config.users.toString(), runB.config.users.toString()],
             ['Duration', `${runA.config.duration}s`, `${runB.config.duration}s`],
             ['Throughput', `${runA.stats.throughput.toFixed(2)}/s`, `${runB.stats.throughput.toFixed(2)}/s`],
@@ -731,16 +731,26 @@ export const exportTrendAnalysisAsPdf = async (
     const sortedRuns = [...runs].sort((a, b) => (Number(a.config?.users) || 0) - (Number(b.config?.users) || 0));
     autoTable(doc, {
         startY: y,
-        head: [['Run', 'Users', 'Duration', 'Throughput', 'Avg Latency', 'Errors']],
-        body: sortedRuns.map((r, i) => [
-            `Run ${i+1}`,
-            r.config?.users || '-',
-            `${r.config?.duration}s`,
-            r.stats?.throughput.toFixed(1) || '-',
-            `${r.stats?.avgResponseTime.toFixed(0)}ms`,
-            `${r.stats?.errorCount}`
-        ]),
-        theme: 'striped'
+        head: [['Type', 'Method', 'Title', 'Users', 'Duration', 'Throughput', 'Avg Latency', 'Errors']],
+        body: sortedRuns.map((r) => {
+            const isApi = r.config?.method !== 'GET' && r.config?.method !== 'HEAD';
+            return [
+                isApi ? 'API' : 'Web',
+                r.config?.method || '-',
+                r.title || '-',
+                r.config?.users || '-',
+                `${r.config?.duration}s`,
+                r.stats?.throughput.toFixed(1) || '-',
+                `${r.stats?.avgResponseTime.toFixed(0)}ms`,
+                `${r.stats?.errorCount}`
+            ];
+        }),
+        theme: 'striped',
+        columnStyles: {
+            0: { fontStyle: 'bold' },
+            1: { fontStyle: 'bold', textColor: [50, 50, 50] },
+            2: { cellWidth: 40 }, // Limit title width
+        }
     });
 
     doc.save(`Trend_Analysis_${new Date().toISOString().split('T')[0]}.pdf`);
@@ -816,6 +826,7 @@ export const exportTrendAnalysisAsDocx = async (
                     new ImageRun({
                         data: imageBuffer,
                         transformation: { width: 600, height: 400 },
+                        type: "png", // Added type: "png" to satisfy type checker
                     }),
                 ],
                 spacing: { before: 400, after: 400 },
@@ -864,29 +875,29 @@ export const exportTrendAnalysisAsDocx = async (
 
     const tableRows = [
         new TableRow({
-            children: ["Type", "Load Profile", "Avg Latency", "Max Latency", "Throughput", "Error Rate"].map(text => 
-                new TableCell({ children: [new Paragraph({ text, bold: true })], width: { size: 16, type: WidthType.PERCENTAGE } })
+            children: ["Type", "Method", "Title", "Profile", "Avg Latency", "Throughput", "Error Rate"].map(text => 
+                new TableCell({ children: [new Paragraph({ children: [new TextRun({ text, bold: true, size: 20 })] })], width: { size: 14, type: WidthType.PERCENTAGE } })
             )
         }),
         ...sortedRuns.map(run => {
             const config = (run.config || {}) as Partial<LoadTestConfig>;
             const stats = run.stats;
             const isApi = config.method !== 'GET' && config.method !== 'HEAD';
-            const type = isApi ? 'API' : 'Web';
+            const typeText = isApi ? 'API' : 'Web';
+            
             const profile = config.runMode === 'iterations' 
                 ? `${(Number(config.iterations) || 0).toLocaleString()} iter.` 
                 : `${config.users} users @ ${config.duration}s`;
             
             const avgLat = stats ? `${Number(stats.avgResponseTime).toFixed(0)} ms` : '-';
-            const maxLat = stats ? `${Number(stats.maxResponseTime).toFixed(0)} ms` : '-';
             const tput = stats ? `${Number(stats.throughput).toFixed(2)}/s` : '-';
             const errRate = stats && stats.totalRequests > 0 
                 ? `${((Number(stats.errorCount) / Number(stats.totalRequests)) * 100).toFixed(1)}%` 
                 : '0.0%';
 
             return new TableRow({
-                children: [type, profile, avgLat, maxLat, tput, errRate].map(text => 
-                    new TableCell({ children: [new Paragraph({ text })] })
+                children: [typeText, config.method || '-', run.title || '-', profile, avgLat, tput, errRate].map(text => 
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text, size: 20 })] })] })
                 )
             });
         })

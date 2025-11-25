@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from '@google/genai';
 import type { LoadTestConfig, TestResultSample, TestStats, PerformanceReport, AssertionResult, DataGenerationRequest, NetworkTimings, FailureAnalysisReport, Header, TrendAnalysisReport, TestRunSummary, TestRun, ComparisonAnalysisReport, ResourceSample, TrendCategoryResult } from '../types';
 import { AutoFixStoppedError } from '../types';
@@ -882,36 +883,25 @@ export async function refineTrendAnalysis(
     let jsonText = '';
     try {
         const client = getAiClient();
-        const systemInstruction = `You are a senior Site Reliability Engineer (SRE). Refine the existing Performance Trend Report based on user feedback. Maintain separate analysis for API (Backend) vs Web (Frontend) tests if they exist.`;
-
-        // Basic summary for context
-        const summaryData = runs.map((run, index) => {
-             const stats: Partial<TestStats> = run.stats || {};
-             const config = (run.config || {}) as Partial<LoadTestConfig>;
-             return `Run ${index+1} [${config.method || 'UNKNOWN'}]: ${Number(stats.totalRequests)} reqs, ${Number(stats.errorCount)} errors.`;
-        }).join('\n');
+        // We update the system instruction to act as a JSON Editor/Patcher rather than a fresh generator.
+        const systemInstruction = `You are a JSON report editor for a load testing application. Your ONLY job is to modify the provided 'Current Report' JSON based on the 'User Instruction'. You must preserve the structure and all fields that are not explicitly asked to be changed. Do NOT regenerate the report from scratch. Apply specific edits.`;
 
         const userPrompt = `
-        **Context:**
-        Existing Trend Analysis Report for ${runs.length} test runs.
-        
-        **Underlying Test Data (Reference):**
-        ${summaryData}
-
-        **Current Report (JSON):**
-        ${JSON.stringify(currentReport, null, 2)}
+        **Task:** Modify the JSON report below according to the user instruction.
 
         **User Instruction:**
         "${userInstruction}"
 
-        **Task:**
-        Update the JSON report.
-        - Keep 'apiTrend' and 'webTrend' structures if they exist.
-        - Do not change calculated grades/scores unless explicitly told the data interpretation was wrong.
-        - Ensure 'conclusiveSummary' still mentions the grand totals if not asked to remove them.
+        **Current Report (JSON):**
+        ${JSON.stringify(currentReport, null, 2)}
+
+        **Constraints:**
+        1. Return the *entire* valid JSON object with the modifications applied.
+        2. Do NOT change the 'analyzedRunsCount' or any calculated metrics (scores/grades) unless the user specifically asks to "correct" them.
+        3. Only edit text fields like 'overallTrendSummary', 'keyObservations', 'recommendations', 'conclusiveSummary', or 'rationale' based on the tone/content requested.
         
         **Output:**
-        Return the full valid JSON.
+        Return the full, valid JSON object matching the original schema. Do not markdown formatting.
         `;
 
         const response = await client.models.generateContent({

@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import type { TrendAnalysisReport, TestRunSummary, TestStats, LoadTestConfig, TrendCategoryResult } from '../types';
 import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon, SparklesIcon, BoltIcon, GlobeAltIcon, WordIcon } from './icons';
@@ -64,14 +65,17 @@ const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
             
             {/* Header: Configuration Highlights */}
             <div className="flex justify-between items-start border-b border-gray-700 pb-3">
-                <div className="flex items-center space-x-2">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${isApiRun ? 'bg-indigo-900 text-indigo-200 border border-indigo-500/30' : 'bg-teal-900 text-teal-200 border border-teal-500/30'}`}>
-                        {isApiRun ? <BoltIcon className="w-3 h-3 mr-1" /> : <GlobeAltIcon className="w-3 h-3 mr-1" />}
-                        {isApiRun ? 'API (Write)' : 'Web (Read)'}
-                    </span>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${config?.loadProfile === 'stair-step' ? 'bg-purple-900 text-purple-200' : 'bg-blue-900 text-blue-200'}`}>
-                        {isIterationMode ? 'Iterations' : (config?.loadProfile === 'stair-step' ? 'Stair Step' : 'Ramp Up')}
-                    </span>
+                <div className="flex flex-col space-y-1">
+                    <div className="flex items-center space-x-2">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${isApiRun ? 'bg-indigo-900 text-indigo-200 border border-indigo-500/30' : 'bg-teal-900 text-teal-200 border border-teal-500/30'}`}>
+                            {isApiRun ? <BoltIcon className="w-3 h-3 mr-1" /> : <GlobeAltIcon className="w-3 h-3 mr-1" />}
+                            {isApiRun ? 'API' : 'Web'}
+                        </span>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${config?.loadProfile === 'stair-step' ? 'bg-purple-900 text-purple-200' : 'bg-blue-900 text-blue-200'}`}>
+                            {isIterationMode ? 'Iterations' : (config?.loadProfile === 'stair-step' ? 'Stair Step' : 'Ramp Up')}
+                        </span>
+                    </div>
+                    <span className="text-xs text-gray-300 font-medium truncate max-w-[200px]">{run.title}</span>
                 </div>
                 <div className="text-right">
                     <p className="text-xs text-gray-500">{new Date(run.created_at).toLocaleDateString()}</p>
@@ -313,6 +317,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
             const updatedReport = await refineTrendAnalysis(report, instruction, runs);
             if (onUpdateReport) {
                 onUpdateReport(updatedReport);
+                alert("Report updated successfully based on your instructions.");
             }
             setIsRefineOpen(false);
         } catch (e) {
@@ -470,17 +475,18 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                                 </div>
                             )}
 
-                            {/* 9. Data Summary Table */}
+                            {/* 9. Data Summary Table - IMPROVED */}
                             <div className="space-y-3 pt-8 border-t border-gray-700">
                                 <h4 className="text-lg font-semibold text-white">Analyzed Test Runs Data</h4>
-                                <div className="overflow-x-auto">
+                                <div className="overflow-x-auto rounded-lg border border-gray-700">
                                     <table className="min-w-full text-sm text-left text-gray-400">
                                         <thead className="text-xs text-gray-300 uppercase bg-gray-800">
                                             <tr>
-                                                <th scope="col" className="px-4 py-3">Type</th>
-                                                <th scope="col" className="px-4 py-3">Load Profile</th>
+                                                <th scope="col" className="px-4 py-3 w-1/6">Type</th>
+                                                <th scope="col" className="px-4 py-3 w-1/6">Method</th>
+                                                <th scope="col" className="px-4 py-3 w-1/4">Title</th>
+                                                <th scope="col" className="px-4 py-3">Profile</th>
                                                 <th scope="col" className="px-4 py-3 text-right">Avg Latency</th>
-                                                <th scope="col" className="px-4 py-3 text-right">Max Latency</th>
                                                 <th scope="col" className="px-4 py-3 text-right">Throughput</th>
                                                 <th scope="col" className="px-4 py-3 text-right">Error Rate</th>
                                             </tr>
@@ -492,29 +498,34 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                                                 const isApi = run.config?.method !== 'GET' && run.config?.method !== 'HEAD';
                                                 
                                                 return (
-                                                    <tr key={run.id} className="hover:bg-gray-800">
-                                                        <td className="px-4 py-3">
-                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${isApi ? 'bg-indigo-900 text-indigo-200' : 'bg-teal-900 text-teal-200'}`}>
+                                                    <tr key={run.id} className="hover:bg-gray-800/50 transition-colors">
+                                                        <td className="px-4 py-3 align-middle">
+                                                            <span className={`inline-flex w-fit items-center px-2 py-0.5 rounded text-xs font-bold ${isApi ? 'bg-indigo-900 text-indigo-300' : 'bg-teal-900 text-teal-300'}`}>
                                                                 {isApi ? 'API' : 'Web'}
                                                             </span>
                                                         </td>
-                                                        <td className="px-4 py-3 font-medium text-white">
+                                                        <td className="px-4 py-3 align-middle">
+                                                            <span className="text-xs font-mono font-semibold text-gray-500 uppercase">{run.config?.method}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3 align-middle font-medium text-white truncate max-w-[200px]" title={run.title}>
+                                                            {run.title}
+                                                        </td>
+                                                        <td className="px-4 py-3 align-middle font-medium text-gray-300">
                                                             {isIterationMode ? (
                                                                 <div>
                                                                     <p>{(Number(run.config?.iterations) || 0).toLocaleString()} iter.</p>
-                                                                    <p className="text-xs font-mono text-gray-400">{run.config?.users ?? 'N/A'} users</p>
+                                                                    <p className="text-xs font-mono text-gray-500">{run.config?.users ?? 'N/A'} users</p>
                                                                 </div>
                                                             ) : (
                                                                 <div>
                                                                     <p>{run.config?.users ?? 'N/A'} users</p>
-                                                                    <p className="text-xs font-mono text-gray-400">{run.config?.duration ?? 'N/A'}s</p>
+                                                                    <p className="text-xs font-mono text-gray-500">{run.config?.duration ?? 'N/A'}s</p>
                                                                 </div>
                                                             )}
                                                         </td>
-                                                        <td className="px-4 py-3 text-right font-mono">{(Number(run.stats?.avgResponseTime) || 0).toFixed(0)}ms</td>
-                                                        <td className="px-4 py-3 text-right font-mono text-red-400">{(Number(run.stats?.maxResponseTime) || 0).toFixed(0)}ms</td>
-                                                        <td className="px-4 py-3 text-right font-mono">{(Number(run.stats?.throughput) || 0).toFixed(2)}/s</td>
-                                                        <td className={`px-4 py-3 text-right font-mono ${errorRate > 5 ? 'text-red-400' : (errorRate > 0 ? 'text-yellow-400' : 'text-gray-400')}`}>{errorRate.toFixed(1)}%</td>
+                                                        <td className="px-4 py-3 align-middle text-right font-mono text-blue-400">{(Number(run.stats?.avgResponseTime) || 0).toFixed(0)}ms</td>
+                                                        <td className="px-4 py-3 align-middle text-right font-mono text-green-400">{(Number(run.stats?.throughput) || 0).toFixed(2)}/s</td>
+                                                        <td className={`px-4 py-3 align-middle text-right font-mono font-bold ${errorRate > 5 ? 'text-red-500' : (errorRate > 0 ? 'text-yellow-500' : 'text-gray-500')}`}>{errorRate.toFixed(1)}%</td>
                                                     </tr>
                                                 );
                                             })}
