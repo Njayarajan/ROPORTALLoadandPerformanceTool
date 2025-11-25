@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import type { LoadTestConfig, TestResultSample, TestStats, PerformanceReport, AssertionResult, DataGenerationRequest, NetworkTimings, FailureAnalysisReport, Header, TrendAnalysisReport, TestRunSummary, TestRun, ComparisonAnalysisReport, ResourceSample } from '../types';
+import type { LoadTestConfig, TestResultSample, TestStats, PerformanceReport, AssertionResult, DataGenerationRequest, NetworkTimings, FailureAnalysisReport, Header, TrendAnalysisReport, TestRunSummary, TestRun, ComparisonAnalysisReport, ResourceSample, TrendCategoryResult } from '../types';
 import { AutoFixStoppedError } from '../types';
 import { getLearnedPayloads, saveSuccessfulPayload } from './learningService';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
@@ -736,14 +736,25 @@ function calculateDeterministicGrade(successRate: number): { grade: 'A' | 'B' | 
     return { grade: 'F', score: 50 };
 }
 
+const trendCategorySchema = {
+    type: Type.OBJECT,
+    properties: {
+        direction: { type: Type.STRING, enum: ['Improving', 'Degrading', 'Stable', 'Inconclusive'] },
+        score: { type: Type.INTEGER },
+        grade: { type: Type.STRING, enum: ['A', 'B', 'C', 'D', 'F'] },
+        rationale: { type: Type.STRING }
+    },
+    required: ['direction', 'score', 'grade', 'rationale']
+};
+
 const trendAnalysisSchema = {
   type: Type.OBJECT,
   properties: {
     analyzedRunsCount: { type: Type.INTEGER, description: "The number of test runs being analyzed." },
-    trendDirection: { type: Type.STRING, enum: ['Improving', 'Degrading', 'Stable', 'Inconclusive'], description: "The overall direction of performance based on chronological comparison." },
-    trendScore: { type: Type.INTEGER, description: "A score from 0 to 100 indicating the health of the trend." },
-    trendGrade: { type: Type.STRING, enum: ['A', 'B', 'C', 'D', 'F'], description: "A letter grade corresponding to the score." },
-    scoreRationale: { type: Type.STRING, description: "A short explanation (1-2 sentences) justifying the score and grade." },
+    trendDirection: { type: Type.STRING, enum: ['Improving', 'Degrading', 'Stable', 'Inconclusive'], description: "Legacy/Overall direction." },
+    trendScore: { type: Type.INTEGER, description: "Legacy/Overall score." },
+    trendGrade: { type: Type.STRING, enum: ['A', 'B', 'C', 'D', 'F'], description: "Legacy/Overall grade." },
+    scoreRationale: { type: Type.STRING, description: "Legacy/Overall rationale." },
     overallTrendSummary: { type: Type.STRING, description: "A high-level, non-technical summary of the performance trend." },
     performanceThreshold: { type: Type.STRING, description: "A clear statement identifying the user load where performance began to significantly degrade." },
     keyObservations: {
@@ -757,7 +768,11 @@ const trendAnalysisSchema = {
       description: "A list of actionable recommendations.",
       items: { type: Type.STRING }
     },
-    conclusiveSummary: { type: Type.STRING, description: "A detailed, concluding paragraph summarizing the overall health and scalability of the system based on these tests." }
+    conclusiveSummary: { type: Type.STRING, description: "A detailed, concluding paragraph summarizing the overall health and scalability of the system based on these tests." },
+    
+    // New specific fields
+    apiTrend: { ...trendCategorySchema, description: "Trend analysis for API (Backend) tests (POST/PUT/etc)." },
+    webTrend: { ...trendCategorySchema, description: "Trend analysis for Web (Frontend/Get) tests (GET)." }
   },
   required: ['analyzedRunsCount', 'trendDirection', 'trendScore', 'trendGrade', 'scoreRationale', 'overallTrendSummary', 'performanceThreshold', 'keyObservations', 'rootCauseSuggestion', 'recommendations', 'conclusiveSummary']
 };
@@ -767,117 +782,81 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
   try {
     const client = getAiClient();
 
-    const systemInstruction = `You are a senior Site Reliability Engineer (SRE) specializing in performance trend analysis. Your job is to analyze a series of load test results and produce a report for both managers and developers. Your output must be a structured JSON object. You MUST provide a value for every field in the schema. No field, especially 'conclusiveSummary', should ever be an empty string.`;
+    const systemInstruction = `You are a senior Site Reliability Engineer (SRE) specializing in performance trend analysis. Your job is to analyze a series of load test results and produce a report. Crucially, you must distinguish between "API Performance Tests" (typically Backend, WRITE operations like POST/PUT/DELETE) and "Simple Web Tests" (typically Frontend, READ operations like GET). Each category serves a different purpose and must be graded separately if present.`;
     
-    // Sort runs chronologically (oldest to newest) to detect improvement properly.
+    // Sort runs chronologically (oldest to newest)
     const sortedRuns = [...runs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     
-    // Calculate grand totals to demonstrate scale
+    // Calculate grand totals
     const grandTotalRequests = sortedRuns.reduce((acc, run) => acc + (Number(run.stats?.totalRequests) || 0), 0);
     const grandTotalSuccess = sortedRuns.reduce((acc, run) => acc + (Number(run.stats?.successCount) || 0), 0);
 
-    // Calculate deterministic metrics for the LATEST run
-    const latestRun = sortedRuns[sortedRuns.length - 1];
-    const latestStats: Partial<TestStats> = latestRun?.stats || {};
-    const totalReqs = Number(latestStats.totalRequests) || 0;
-    const errorCnt = Number(latestStats.errorCount) || 0;
-    
-    let latestSuccessRate = 0;
-    if (totalReqs > 0) {
-        latestSuccessRate = ((totalReqs - errorCnt) / totalReqs) * 100;
-    }
-    
-    const { grade, score } = calculateDeterministicGrade(latestSuccessRate);
+    // Split runs into two categories based on Method
+    const apiRuns = sortedRuns.filter(r => r.config.method !== 'GET' && r.config.method !== 'HEAD');
+    const webRuns = sortedRuns.filter(r => r.config.method === 'GET' || r.config.method === 'HEAD');
 
-    const summaryData = sortedRuns.map((run, index) => {
-        const stats: Partial<TestStats> = run.stats || {};
+    // Helper to calculate grade for a group
+    const getGroupMetrics = (group: TestRunSummary[]) => {
+        if (group.length === 0) return null;
+        const latest = group[group.length - 1];
+        const total = Number(latest.stats?.totalRequests) || 0;
+        const errors = Number(latest.stats?.errorCount) || 0;
+        const rate = total > 0 ? ((total - errors) / total) * 100 : 0;
+        return calculateDeterministicGrade(rate);
+    };
+
+    const apiMetrics = getGroupMetrics(apiRuns);
+    const webMetrics = getGroupMetrics(webRuns);
+    
+    // Overall metrics (fallback to API if exists, else Web)
+    const overallMetrics = apiMetrics || webMetrics || calculateDeterministicGrade(0);
+
+    const formatRun = (run: TestRunSummary, index: number) => {
+        const stats = (run.stats || {}) as Partial<TestStats>;
         const totalRequests = Number(stats.totalRequests) || 0;
         const errorCount = Number(stats.errorCount) || 0;
         const avgResponseTime = Number(stats.avgResponseTime) || 0;
-        const maxResponseTime = Number(stats.maxResponseTime) || 0;
         const throughput = Number(stats.throughput) || 0;
-
-        if (totalRequests === 0 && avgResponseTime === 0) {
-            return `Run ${index + 1} [${run.title || 'Untitled'}]: Data is corrupted or missing stats.`;
-        }
-
         const errorRate = totalRequests > 0 ? (errorCount / totalRequests) * 100 : 0;
         const successRate = 100 - errorRate;
         
-        const config: Partial<LoadTestConfig> = run.config || {};
-        const runMode = config.runMode || 'duration';
-        const users = config.users ?? 'N/A';
-        const pacing = config.pacing ?? 0;
-        let runContext = '';
+        const config = (run.config || {}) as Partial<LoadTestConfig>;
+        let runContext = `${config.users} Users, ${config.duration}s`;
+        if (config.loadProfile === 'stair-step') runContext += `, Stair-Step`;
+        
+        return `Run ${index + 1} [${run.config.method}] [${run.title || 'Untitled'}]: Avg Latency=${avgResponseTime.toFixed(0)}ms, Success=${successRate.toFixed(2)}%, Throughput=${throughput.toFixed(1)}/s. (${runContext})`;
+    };
 
-        if (runMode === 'iterations') {
-            const iterations = config.iterations ?? 'N/A';
-            runContext = `${iterations} Iterations, ${users} Concurrent Users, ${pacing}ms Pacing`;
-        } else {
-            const duration = config.duration ?? 'N/A';
-            const loadProfile = config.loadProfile || 'ramp-up';
-            
-            // Add detailed profile info so the AI can differentiate between aggressive/realistic scenarios
-            let profileDetails = '';
-            if (loadProfile === 'stair-step') {
-                profileDetails = `Stair-Step (+${config.stepUsers ?? 0} users every ${config.stepDuration ?? 0}s)`;
-            } else {
-                profileDetails = `Linear Ramp-Up over ${config.rampUp ?? 0}s`;
-            }
-            
-            runContext = `${users} Peak Users, ${duration}s Duration, ${pacing}ms Pacing, ${profileDetails}`;
-        }
-
-        // Sanitize title to prevent backtick issues in the prompt string
-        const safeTitle = (run.title || 'Untitled').replace(/`/g, "'");
-
-        return `Run ${index + 1} [${safeTitle}] [${runContext}]: Avg Latency=${avgResponseTime.toFixed(0)}ms, Max Latency=${maxResponseTime.toFixed(0)}ms, Success Rate=${successRate.toFixed(2)}% (Errors: ${errorRate.toFixed(2)}%), Throughput=${throughput.toFixed(1)} req/s`;
-    }).join('\n');
+    const apiRunData = apiRuns.map((r, i) => formatRun(r, i)).join('\n');
+    const webRunData = webRuns.map((r, i) => formatRun(r, i)).join('\n');
 
     const userPrompt = `
-      Analyze the following series of ${runs.length} load test results, sorted chronologically from oldest (Run 1) to newest. Your response must be a JSON object that adheres to the provided schema.
+      Analyze the following ${runs.length} test runs. Separately analyze "API Transaction Tests" (Backend) and "Web/GET Tests" (Frontend).
 
-      **Test Run Data:**
-      (Each line represents a different test run with its configuration and key results)
-      ${summaryData}
+      **API Transaction Runs (Backend/Complex):**
+      ${apiRunData || "No API/Write tests found."}
+
+      **Web/GET Runs (Frontend/Simple):**
+      ${webRunData || "No Web/GET tests found."}
 
       **Aggregate Statistics:**
-      - Grand Total Requests Processed: ${grandTotalRequests.toLocaleString()}
-      - Grand Total Successful Submissions: ${grandTotalSuccess.toLocaleString()}
+      - Grand Total Requests: ${grandTotalRequests.toLocaleString()}
+      - Grand Total Success: ${grandTotalSuccess.toLocaleString()}
 
-      **Analysis Guidelines:**
-      - Compare the *latest* runs against the *earlier* runs to determine the trend.
-      
-      **Configuration & Realism Context:**
-      You MUST analyze the realism of the test based on the 'Pacing' and 'Load Profile' values provided in the run context:
-      - **Request Pacing:**
-        - **< 100ms:** Aggressive Stress Test. Measures max throughput but is unrealistic for human behavior. High load here is expected to degrade performance faster.
-        - **> 500ms:** Realistic User Simulation. Measures how the system handles typical user journey speeds.
-      - **Load Profile:**
-        - **Stair-Step:** Designed to test stability and recovery at specific concurrency levels. Look for performance holding steady during the steps.
-        - **Ramp-Up:** Designed to find the breaking point. Degradation near the end is common.
-      
-      **Mandatory Instruction:** You must explicitly mention in the 'overallTrendSummary' or 'conclusiveSummary' whether the latest test represents a "Realistic User Scenario" or a "Stress/Capacity Test" based on the pacing configuration, and explain how this influences the results.
+      **Analysis Requirements:**
+      1. **Differentiate:** Clearly distinguish between the two types of tests in your summary. An 'A' on a simple GET test is easier to achieve than an 'A' on a complex POST transaction.
+      2. **API Trend (if applicable):** Analyze the trend for the API runs.
+         - MANDATORY GRADE: The latest API run success rate implies a Grade of **${apiMetrics?.grade ?? 'N/A'}** (${apiMetrics?.score ?? 0}). Use this exactly in the 'apiTrend' object.
+      3. **Web Trend (if applicable):** Analyze the trend for the Web runs.
+         - MANDATORY GRADE: The latest Web run success rate implies a Grade of **${webMetrics?.grade ?? 'N/A'}** (${webMetrics?.score ?? 0}). Use this exactly in the 'webTrend' object.
+      4. **Overall:** Provide a high-level summary in 'overallTrendSummary' that mentions both aspects if present.
+      5. **Conclusion:** In 'conclusiveSummary', mention the **Grand Total Successful Submissions** (${grandTotalSuccess.toLocaleString()}) to emphasize the scale of testing.
 
-      - **Success Metric:** Performance is strictly graded on Reliability (Success Rate), NOT latency. A test with 100% success is an 'A' grade regardless of response time.
-      - **Geo-Location:** Do NOT mention user or server locations (e.g., "US-based", "Australia"). Focus solely on the performance metrics.
-      
-      - **GRADING INSTRUCTION:** The latest run has a success rate of **${latestSuccessRate.toFixed(2)}%**. Based on the strict reliability rubric, this corresponds to a Grade of **${grade}**.
-      - **You MUST use "${grade}" as the 'trendGrade' and ${score} as the 'trendScore' in your JSON output.** Do not calculate your own grade based on latency.
-      - **PRIMARY METRIC:** Reliability (Success Rate) and Throughput.
-      
-      **Grading Rubric (Reference Only - use the mandated grade above):**
-        - **90-100 (A - Excellent):** Success Rate > 99.5%.
-        - **80-89 (B - Good):** Success Rate > 98%.
-        - **70-79 (C - Fair):** Success Rate > 95%.
-        - **60-69 (D - Poor):** Success Rate > 90%.
-        - **0-59 (F - Critical):** Success Rate < 90%.
-      
-      **CRITICAL REQUIREMENT:** The 'conclusiveSummary' field is the most important part of this report. It MUST explicitly state the **Grand Total Successful Submissions (${grandTotalSuccess.toLocaleString()})** out of **${grandTotalRequests.toLocaleString()} total requests** across these runs. Use this data to emphasize the sheer volume or "mass amounts" of traffic handled by the system, validating its robustness at scale.
-
-      - **You MUST generate a value for every field defined in the JSON schema.** Do not omit any fields. All fields must be populated with non-empty, meaningful values.
-
-      Ensure the 'analyzedRunsCount' in your JSON output is exactly ${runs.length}.
+      **JSON Output:**
+      Produce a JSON object matching the schema.
+      - Populate 'apiTrend' ONLY if API runs exist.
+      - Populate 'webTrend' ONLY if Web runs exist.
+      - For 'trendGrade' and 'trendScore' (top-level legacy fields), use the grade from the **API tests** if available, otherwise Web tests.
     `;
     
     const response = await client.models.generateContent({
@@ -891,15 +870,23 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
     });
     
     jsonText = response.text.trim();
-    // Extra safety cleanup in case the model outputted markdown fences around the JSON
+    // Extra safety cleanup
     jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
     
     const parsedReport = JSON.parse(jsonText) as TrendAnalysisReport;
 
-    // SAFETY OVERWRITE: Ensure the grade matches the deterministic calculation, 
-    // even if the AI hallucinated something else despite instructions.
-    parsedReport.trendGrade = grade;
-    parsedReport.trendScore = score;
+    // SAFETY OVERWRITE: Force deterministic grades to prevent hallucinations
+    if (parsedReport.apiTrend && apiMetrics) {
+        parsedReport.apiTrend.grade = apiMetrics.grade;
+        parsedReport.apiTrend.score = apiMetrics.score;
+    }
+    if (parsedReport.webTrend && webMetrics) {
+        parsedReport.webTrend.grade = webMetrics.grade;
+        parsedReport.webTrend.score = webMetrics.score;
+    }
+    // Overwrite legacy fields
+    parsedReport.trendGrade = overallMetrics.grade;
+    parsedReport.trendScore = overallMetrics.score;
 
     return parsedReport;
 
@@ -928,19 +915,17 @@ export async function refineTrendAnalysis(
     let jsonText = '';
     try {
         const client = getAiClient();
-        const systemInstruction = `You are a senior Site Reliability Engineer (SRE). You are refining an existing Performance Trend Report based on specific user feedback. Maintain the original data accuracy but adjust the tone, focus, or content as requested.`;
+        const systemInstruction = `You are a senior Site Reliability Engineer (SRE). Refine the existing Performance Trend Report based on user feedback. Maintain separate analysis for API (Backend) vs Web (Frontend) tests if they exist.`;
 
+        // Basic summary for context
         const summaryData = runs.map((run, index) => {
              const stats: Partial<TestStats> = run.stats || {};
-             const totalRequests = Number(stats.totalRequests) || 0;
-             const errorCount = Number(stats.errorCount) || 0;
-             const successCount = Number(stats.successCount) || 0;
-             return `Run ${index+1}: ${totalRequests} reqs, ${successCount} success, ${errorCount} errors. Avg Latency: ${Number(stats.avgResponseTime).toFixed(0)}ms.`;
+             return `Run ${index+1} [${run.config.method}]: ${Number(stats.totalRequests)} reqs, ${Number(stats.errorCount)} errors.`;
         }).join('\n');
 
         const userPrompt = `
         **Context:**
-        I have an existing Trend Analysis Report for ${runs.length} test runs.
+        Existing Trend Analysis Report for ${runs.length} test runs.
         
         **Underlying Test Data (Reference):**
         ${summaryData}
@@ -948,18 +933,17 @@ export async function refineTrendAnalysis(
         **Current Report (JSON):**
         ${JSON.stringify(currentReport, null, 2)}
 
-        **User Instruction for Refinement:**
+        **User Instruction:**
         "${userInstruction}"
 
         **Task:**
-        Update the JSON report to reflect the user's instruction.
-        - If the user asks to change the tone, rewrite the summaries.
-        - If the user asks to emphasize specific metrics (like total submissions), ensure they are prominent in the 'conclusiveSummary'.
-        - DO NOT invent false data.
-        - Keep the 'trendGrade', 'trendScore', and 'analyzedRunsCount' unchanged unless the user explicitly argues they are wrong based on the data.
+        Update the JSON report.
+        - Keep 'apiTrend' and 'webTrend' structures if they exist.
+        - Do not change calculated grades/scores unless explicitly told the data interpretation was wrong.
+        - Ensure 'conclusiveSummary' still mentions the grand totals if not asked to remove them.
         
         **Output:**
-        Return the full, valid JSON object adhering to the original schema.
+        Return the full valid JSON.
         `;
 
         const response = await client.models.generateContent({

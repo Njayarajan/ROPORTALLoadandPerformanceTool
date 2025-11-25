@@ -176,6 +176,13 @@ export interface FailureAnalysisReport {
     suggestedNextSteps: string[];
 }
 
+export interface TrendCategoryResult {
+    direction: 'Improving' | 'Degrading' | 'Stable' | 'Inconclusive';
+    score: number; // 0 to 100
+    grade: 'A' | 'B' | 'C' | 'D' | 'F';
+    rationale: string;
+}
+
 export interface TrendAnalysisReport {
     overallTrendSummary?: string;
     performanceThreshold?: string;
@@ -184,11 +191,16 @@ export interface TrendAnalysisReport {
     recommendations?: string[];
     analyzedRunsCount: number;
     conclusiveSummary?: string;
-    // Enhanced Grading Fields
+    
+    // Legacy/Overall Grading (fallback)
     trendDirection: 'Improving' | 'Degrading' | 'Stable' | 'Inconclusive';
     trendScore: number; // 0 to 100
     trendGrade: 'A' | 'B' | 'C' | 'D' | 'F';
     scoreRationale: string;
+
+    // New: Split Grading
+    apiTrend?: TrendCategoryResult;
+    webTrend?: TrendCategoryResult;
 }
 
 export interface ComparisonMetricChange {

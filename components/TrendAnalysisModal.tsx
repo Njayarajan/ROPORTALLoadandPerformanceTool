@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import type { TrendAnalysisReport, TestRunSummary, TestStats, LoadTestConfig } from '../types';
-import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon, SparklesIcon } from './icons';
+import type { TrendAnalysisReport, TestRunSummary, TestStats, LoadTestConfig, TrendCategoryResult } from '../types';
+import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon, SparklesIcon, BoltIcon, GlobeAltIcon } from './icons';
 import { exportTrendAnalysisAsPdf } from '../services/exportService';
 import { refineTrendAnalysis } from '../services/geminiService';
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts';
@@ -53,6 +53,7 @@ const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
     const isIterationMode = config?.runMode === 'iterations';
     const pacing = config?.pacing || 0;
     const loadProfile = config?.loadProfile || 'ramp-up';
+    const isApiRun = config?.method !== 'GET' && config?.method !== 'HEAD';
 
     const profileDetailText = loadProfile === 'stair-step' 
         ? `Step: +${config?.stepUsers ?? 0} every ${config?.stepDuration ?? 0}s` 
@@ -63,7 +64,11 @@ const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
             
             {/* Header: Configuration Highlights */}
             <div className="flex justify-between items-start border-b border-gray-700 pb-3">
-                <div>
+                <div className="flex items-center space-x-2">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${isApiRun ? 'bg-indigo-900 text-indigo-200 border border-indigo-500/30' : 'bg-teal-900 text-teal-200 border border-teal-500/30'}`}>
+                        {isApiRun ? <BoltIcon className="w-3 h-3 mr-1" /> : <GlobeAltIcon className="w-3 h-3 mr-1" />}
+                        {isApiRun ? 'API (Write)' : 'Web (Read)'}
+                    </span>
                     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${config?.loadProfile === 'stair-step' ? 'bg-purple-900 text-purple-200' : 'bg-blue-900 text-blue-200'}`}>
                         {isIterationMode ? 'Iterations' : (config?.loadProfile === 'stair-step' ? 'Stair Step' : 'Ramp Up')}
                     </span>
@@ -130,52 +135,58 @@ const TrendRunCard: React.FC<{ run: TestRunSummary }> = ({ run }) => {
     );
 };
 
-const TrendScoreCard: React.FC<{ report: TrendAnalysisReport }> = ({ report }) => {
-    const { trendGrade, trendScore, trendDirection, scoreRationale } = report;
+const TrendScoreCard: React.FC<{ data: TrendCategoryResult, title: string, icon?: React.ReactNode }> = ({ data, title, icon }) => {
+    const { grade, score, direction, rationale } = data;
     
     let colorClass = 'text-gray-400';
     let bgClass = 'bg-gray-800';
     let borderClass = 'border-gray-700';
 
-    if (trendGrade === 'A') { colorClass = 'text-green-400'; bgClass = 'bg-green-900/20'; borderClass = 'border-green-500/50'; }
-    else if (trendGrade === 'B') { colorClass = 'text-blue-400'; bgClass = 'bg-blue-900/20'; borderClass = 'border-blue-500/50'; }
-    else if (trendGrade === 'C') { colorClass = 'text-yellow-400'; bgClass = 'bg-yellow-900/20'; borderClass = 'border-yellow-500/50'; }
+    if (grade === 'A') { colorClass = 'text-green-400'; bgClass = 'bg-green-900/20'; borderClass = 'border-green-500/50'; }
+    else if (grade === 'B') { colorClass = 'text-blue-400'; bgClass = 'bg-blue-900/20'; borderClass = 'border-blue-500/50'; }
+    else if (grade === 'C') { colorClass = 'text-yellow-400'; bgClass = 'bg-yellow-900/20'; borderClass = 'border-yellow-500/50'; }
     else { colorClass = 'text-red-400'; bgClass = 'bg-red-900/20'; borderClass = 'border-red-500/50'; }
 
-    const directionIcon = trendDirection === 'Improving' ? '↗' : trendDirection === 'Degrading' ? '↘' : '→';
+    const directionIcon = direction === 'Improving' ? '↗' : direction === 'Degrading' ? '↘' : '→';
 
     return (
-        <div className={`p-6 rounded-lg border ${borderClass} ${bgClass} flex flex-col gap-6`}>
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-                <div className="flex items-center gap-4">
-                    <div className={`w-20 h-20 rounded-full border-4 ${borderClass.replace('/50','')} flex items-center justify-center bg-gray-900/50`}>
-                        <span className={`text-4xl font-bold ${colorClass}`}>{trendGrade}</span>
-                    </div>
-                    <div>
-                        <h3 className="text-lg font-semibold text-white">Performance Trend</h3>
-                        <div className={`text-2xl font-bold ${colorClass} flex items-center gap-2`}>
-                            {trendDirection} <span className="text-3xl">{directionIcon}</span>
-                        </div>
-                        <p className="text-sm text-gray-400 mt-1">Score: {trendScore}/100</p>
-                    </div>
-                </div>
-                <div className="flex-grow bg-gray-900/50 p-4 rounded-lg border border-gray-700/50 text-sm text-gray-300 w-full md:w-auto">
-                    <strong className="text-white block mb-1">Rating Rationale:</strong>
-                    {scoreRationale}
+        <div className={`p-6 rounded-lg border ${borderClass} ${bgClass} flex flex-col gap-6 flex-1 min-w-[300px]`}>
+            <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 text-white font-semibold text-lg">
+                    {icon}
+                    <h3>{title}</h3>
                 </div>
             </div>
             
-            <div className="border-t border-gray-700/50 pt-4">
-                <p className="text-xs text-gray-400 mb-2 uppercase font-semibold tracking-wider">Grading Legend (Reliability Focus)</p>
-                <GradingLegend />
+            <div className="flex flex-col md:flex-row items-start md:items-center gap-6">
+                <div className="flex items-center gap-4">
+                    <div className={`w-16 h-16 rounded-full border-4 ${borderClass.replace('/50','')} flex items-center justify-center bg-gray-900/50`}>
+                        <span className={`text-3xl font-bold ${colorClass}`}>{grade}</span>
+                    </div>
+                    <div>
+                        <div className={`text-xl font-bold ${colorClass} flex items-center gap-2`}>
+                            {direction} <span className="text-2xl">{directionIcon}</span>
+                        </div>
+                        <p className="text-sm text-gray-400 mt-1">Score: {score}/100</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div className="bg-gray-900/50 p-3 rounded-lg border border-gray-700/50 text-sm text-gray-300">
+                <strong className="text-white block mb-1 text-xs uppercase tracking-wider">Rationale:</strong>
+                {rationale}
             </div>
         </div>
     );
 };
 
-const TrendChart: React.FC<{ runs: TestRunSummary[] }> = ({ runs }) => {
+const TrendChart: React.FC<{ runs: TestRunSummary[], title: string, filterType: 'api' | 'web' }> = ({ runs, title, filterType }) => {
     const sortedRuns = useMemo(() => {
         return [...runs]
+            .filter(r => {
+                const isGet = r.config.method === 'GET' || r.config.method === 'HEAD';
+                return filterType === 'web' ? isGet : !isGet;
+            })
             .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
             .map((run, index) => ({
                 name: `Run ${index + 1}`,
@@ -183,21 +194,23 @@ const TrendChart: React.FC<{ runs: TestRunSummary[] }> = ({ runs }) => {
                 avgLatency: Math.round(Number(run.stats?.avgResponseTime) || 0),
                 throughput: Number((Number(run.stats?.throughput) || 0).toFixed(2)),
             }));
-    }, [runs]);
+    }, [runs, filterType]);
+
+    if (sortedRuns.length === 0) return null;
 
     return (
-        <div className="bg-gray-900 rounded-lg border border-gray-700 p-4">
+        <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 flex-1 min-w-[300px]">
             <h4 className="text-sm font-semibold text-white mb-4 flex items-center">
                 <ChartBarSquareIcon className="w-5 h-5 mr-2 text-blue-400"/>
-                Metric Progression (Chronological)
+                {title} (Latency & Throughput)
             </h4>
-            <div style={{ width: '100%', height: 300 }} id="trend-analysis-chart-container">
+            <div style={{ width: '100%', height: 250 }} id={`trend-analysis-chart-${filterType}`}>
                 <ResponsiveContainer>
                     <ComposedChart data={sortedRuns} margin={{ top: 20, right: 20, left: 0, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                         <XAxis dataKey="name" stroke="#9ca3af" fontSize={12} tick={{ fill: '#9ca3af' }} />
-                        <YAxis yAxisId="left" orientation="left" stroke="#3b82f6" label={{ value: 'Latency (ms)', angle: -90, position: 'insideLeft', fill: '#3b82f6' }} />
-                        <YAxis yAxisId="right" orientation="right" stroke="#10b981" label={{ value: 'Throughput (req/s)', angle: 90, position: 'insideRight', fill: '#10b981' }} />
+                        <YAxis yAxisId="left" orientation="left" stroke="#3b82f6" label={{ value: 'Latency (ms)', angle: -90, position: 'insideLeft', fill: '#3b82f6', dx: 5 }} />
+                        <YAxis yAxisId="right" orientation="right" stroke="#10b981" label={{ value: 'Throughput (req/s)', angle: 90, position: 'insideRight', fill: '#10b981', dx: -5 }} />
                         <Tooltip 
                             contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151' }}
                             labelStyle={{ color: '#fff' }}
@@ -269,7 +282,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
         if (!report || !runs) return;
         setIsExporting(true);
         try {
-            // Pass the ID of the chart container to capture it
+            // Capture main charts container
             await exportTrendAnalysisAsPdf(report, runs, 'trend-analysis-chart-container');
         } catch (e) {
             console.error("Failed to export trend analysis PDF:", e);
@@ -298,10 +311,13 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
     
     if (!isOpen) return null;
 
+    const hasApiTrend = !!report?.apiTrend;
+    const hasWebTrend = !!report?.webTrend;
+
     return (
         <div className="fixed inset-0 bg-gray-950/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
             <div
-                className="bg-gray-900 w-full max-w-5xl rounded-xl border border-gray-700 shadow-2xl flex flex-col max-h-[95vh]"
+                className="bg-gray-900 w-full max-w-6xl rounded-xl border border-gray-700 shadow-2xl flex flex-col max-h-[95vh]"
                 onClick={(e) => e.stopPropagation()}
             >
                 <header className="flex items-center justify-between p-4 border-b border-gray-700 flex-shrink-0">
@@ -332,7 +348,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                         <div className="flex flex-col items-center justify-center h-64 text-center">
                             <SpinnerIcon className="w-10 h-10 animate-spin text-blue-500 mb-4" />
                             <h3 className="text-xl font-bold text-white">Analyzing Trends...</h3>
-                            <p className="text-gray-400 mt-2">The AI is processing multiple test runs to identify performance patterns. This may take a moment.</p>
+                            <p className="text-gray-400 mt-2">The AI is processing test runs, separating API (Backend) and Web (Frontend) metrics.</p>
                         </div>
                     ) : !report ? (
                         <div className="flex flex-col items-center justify-center h-64 text-center text-gray-500">
@@ -342,14 +358,34 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                         </div>
                     ) : (
                         <>
-                            {/* 1. Scorecard */}
-                            {(report.trendGrade || report.trendDirection) && (
-                                <TrendScoreCard report={report} />
-                            )}
+                            {/* 1. Dual Scorecards & Legend */}
+                            <div className="flex flex-col gap-6">
+                                <div className="flex flex-wrap gap-6">
+                                    {hasApiTrend && (
+                                        <TrendScoreCard 
+                                            data={report.apiTrend!} 
+                                            title="API Performance (Backend)" 
+                                            icon={<BoltIcon className="w-6 h-6 text-indigo-400" />} 
+                                        />
+                                    )}
+                                    {hasWebTrend && (
+                                        <TrendScoreCard 
+                                            data={report.webTrend!} 
+                                            title="Web Performance (Frontend)" 
+                                            icon={<GlobeAltIcon className="w-6 h-6 text-teal-400" />} 
+                                        />
+                                    )}
+                                </div>
+                                <div>
+                                    <p className="text-xs text-gray-400 mb-2 uppercase font-semibold tracking-wider text-center">Grading Legend (Reliability Focus)</p>
+                                    <GradingLegend />
+                                </div>
+                            </div>
 
-                            {/* 2. Visual Chart - Wrapped with ID for capture */}
-                            <div id="trend-analysis-chart-container">
-                                <TrendChart runs={runs} />
+                            {/* 2. Visual Charts - Split */}
+                            <div className="flex flex-wrap gap-6" id="trend-analysis-chart-container">
+                                {hasApiTrend && <TrendChart runs={runs} title="API Trend" filterType="api" />}
+                                {hasWebTrend && <TrendChart runs={runs} title="Web Trend" filterType="web" />}
                             </div>
 
                             {/* 3. Executive Summary */}
@@ -427,40 +463,44 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                                     <table className="min-w-full text-sm text-left text-gray-400">
                                         <thead className="text-xs text-gray-300 uppercase bg-gray-800">
                                             <tr>
+                                                <th scope="col" className="px-4 py-3">Type</th>
                                                 <th scope="col" className="px-4 py-3">Load Profile</th>
-                                                <th scope="col" className="px-4 py-3 text-right">Avg Latency (ms)</th>
-                                                <th scope="col" className="px-4 py-3 text-right">Min Latency (ms)</th>
-                                                <th scope="col" className="px-4 py-3 text-right">Max Latency (ms)</th>
-                                                <th scope="col" className="px-4 py-3 text-right">Consistency (CV%)</th>
-                                                <th scope="col" className="px-4 py-3 text-right">Throughput (req/s)</th>
-                                                <th scope="col" className="px-4 py-3 text-right">Error Rate (%)</th>
+                                                <th scope="col" className="px-4 py-3 text-right">Avg Latency</th>
+                                                <th scope="col" className="px-4 py-3 text-right">Max Latency</th>
+                                                <th scope="col" className="px-4 py-3 text-right">Throughput</th>
+                                                <th scope="col" className="px-4 py-3 text-right">Error Rate</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-700">
                                             {[...runs].sort((a, b) => (Number(a.config?.users) || 0) - (Number(b.config?.users) || 0)).map(run => {
                                                 const errorRate = (Number(run.stats?.totalRequests) || 0) > 0 ? (((Number(run.stats?.errorCount) || 0) / (Number(run.stats?.totalRequests) || 1)) * 100) : 0;
                                                 const isIterationMode = run.config?.runMode === 'iterations';
+                                                const isApi = run.config?.method !== 'GET' && run.config?.method !== 'HEAD';
+                                                
                                                 return (
                                                     <tr key={run.id} className="hover:bg-gray-800">
+                                                        <td className="px-4 py-3">
+                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${isApi ? 'bg-indigo-900 text-indigo-200' : 'bg-teal-900 text-teal-200'}`}>
+                                                                {isApi ? 'API' : 'Web'}
+                                                            </span>
+                                                        </td>
                                                         <td className="px-4 py-3 font-medium text-white">
                                                             {isIterationMode ? (
                                                                 <div>
                                                                     <p>{(Number(run.config?.iterations) || 0).toLocaleString()} iter.</p>
-                                                                    <p className="text-xs font-mono text-gray-400">{run.config?.users ?? 'N/A'} users @ {run.config?.pacing ?? 'N/A'}ms</p>
+                                                                    <p className="text-xs font-mono text-gray-400">{run.config?.users ?? 'N/A'} users</p>
                                                                 </div>
                                                             ) : (
                                                                 <div>
                                                                     <p>{run.config?.users ?? 'N/A'} users</p>
-                                                                    <p className="text-xs font-mono text-gray-400">{run.config?.duration ?? 'N/A'}s duration</p>
+                                                                    <p className="text-xs font-mono text-gray-400">{run.config?.duration ?? 'N/A'}s</p>
                                                                 </div>
                                                             )}
                                                         </td>
-                                                        <td className="px-4 py-3 text-right font-mono">{(Number(run.stats?.avgResponseTime) || 0).toFixed(0)}</td>
-                                                        <td className="px-4 py-3 text-right font-mono text-green-400">{(Number(run.stats?.minResponseTime) || 0).toFixed(0)}</td>
-                                                        <td className="px-4 py-3 text-right font-mono text-red-400">{(Number(run.stats?.maxResponseTime) || 0).toFixed(0)}</td>
-                                                        <td className="px-4 py-3 text-right font-mono">{(Number(run.stats?.latencyCV) || 0).toFixed(1)}</td>
-                                                        <td className="px-4 py-3 text-right font-mono">{(Number(run.stats?.throughput) || 0).toFixed(2)}</td>
-                                                        <td className={`px-4 py-3 text-right font-mono ${errorRate > 5 ? 'text-red-400' : (errorRate > 0 ? 'text-yellow-400' : 'text-gray-400')}`}>{errorRate.toFixed(1)}</td>
+                                                        <td className="px-4 py-3 text-right font-mono">{(Number(run.stats?.avgResponseTime) || 0).toFixed(0)}ms</td>
+                                                        <td className="px-4 py-3 text-right font-mono text-red-400">{(Number(run.stats?.maxResponseTime) || 0).toFixed(0)}ms</td>
+                                                        <td className="px-4 py-3 text-right font-mono">{(Number(run.stats?.throughput) || 0).toFixed(2)}/s</td>
+                                                        <td className={`px-4 py-3 text-right font-mono ${errorRate > 5 ? 'text-red-400' : (errorRate > 0 ? 'text-yellow-400' : 'text-gray-400')}`}>{errorRate.toFixed(1)}%</td>
                                                     </tr>
                                                 );
                                             })}
