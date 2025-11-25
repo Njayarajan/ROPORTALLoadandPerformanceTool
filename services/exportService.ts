@@ -261,7 +261,6 @@ export const exportAsPdf = async (
         if (suggestionText) {
             summaryY += 2;
             doc.setDrawColor(theme.colors.border);
-            // FIX: The line function requires 4 arguments (x1, y1, x2, y2). A horizontal line was intended.
             doc.line(theme.margin + 5, summaryY, PAGE_WIDTH - theme.margin - 5, summaryY);
             summaryY += 3;
             const suggestionLines = doc.splitTextToSize(`Suggestion: ${suggestionText}`, CONTENT_WIDTH - 10);
@@ -662,98 +661,172 @@ export const exportTrendAnalysisAsPdf = async (
     const MARGIN = theme.margin;
     let y = MARGIN;
 
-    // Title
+    // --- HELPER: Draw Section ---
+    const drawSection = (title: string, content: string | string[], yPos: number): number => {
+        if (!content || (Array.isArray(content) && content.length === 0)) return yPos;
+
+        // Check page break
+        const checkHeight = 20; 
+        if (yPos + checkHeight > 280) {
+            doc.addPage();
+            yPos = MARGIN;
+        }
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(14);
+        doc.setTextColor(theme.colors.textDark);
+        doc.text(title, MARGIN, yPos);
+        yPos += 7;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.setTextColor(theme.colors.text);
+
+        if (Array.isArray(content)) {
+            content.forEach(item => {
+                const lines = doc.splitTextToSize(`• ${item}`, CONTENT_WIDTH);
+                if (yPos + (lines.length * 5) > 280) {
+                    doc.addPage();
+                    yPos = MARGIN;
+                }
+                doc.text(lines, MARGIN, yPos);
+                yPos += lines.length * 5 + 1;
+            });
+        } else {
+            const lines = doc.splitTextToSize(content, CONTENT_WIDTH);
+            if (yPos + (lines.length * 5) > 280) {
+                doc.addPage();
+                yPos = MARGIN;
+            }
+            doc.text(lines, MARGIN, yPos);
+            yPos += lines.length * 5;
+        }
+        return yPos + 10; // Space after section
+    };
+
+    // --- HELPER: Draw Grade Circle ---
+    const drawGradeCircle = (x: number, yPos: number, trend: TrendCategoryResult, title: string) => {
+        const circleRadius = 12;
+        let color = theme.colors.textLight;
+        if (trend.grade === 'A') color = theme.colors.positive;
+        else if (trend.grade === 'B') color = theme.colors.primary;
+        else if (trend.grade === 'C') color = theme.colors.warning;
+        else color = theme.colors.critical;
+
+        // Circle
+        doc.setDrawColor(color);
+        doc.setLineWidth(1.5);
+        doc.setFillColor(255, 255, 255);
+        doc.circle(x + circleRadius, yPos + circleRadius, circleRadius, 'FD');
+
+        // Grade Letter
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(22);
+        doc.setTextColor(color);
+        doc.text(trend.grade, x + circleRadius, yPos + circleRadius + 3, { align: 'center' });
+
+        // Text Block Next to Circle
+        const textX = x + (circleRadius * 2) + 5;
+        doc.setFontSize(12);
+        doc.setTextColor(theme.colors.textDark);
+        doc.text(`${title}: Grade ${trend.grade} (${trend.score}/100) - ${trend.direction}`, textX, yPos + 6);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(theme.colors.text);
+        const rationaleLines = doc.splitTextToSize(trend.rationale, CONTENT_WIDTH - (textX - MARGIN));
+        doc.text(rationaleLines, textX, yPos + 12);
+        
+        return Math.max(circleRadius * 2, rationaleLines.length * 4 + 12) + 10; // Return height used
+    };
+
+    // --- TITLE ---
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(theme.fontSizes.title);
+    doc.setFontSize(22);
     doc.setTextColor(theme.colors.textDark);
     doc.text('Trend Analysis Report', PAGE_WIDTH / 2, y + 10, { align: 'center' });
     y += 20;
 
-    doc.setFontSize(theme.fontSizes.h2);
+    doc.setFontSize(12);
     doc.setTextColor(theme.colors.textLight);
-    doc.text(`Analyzed ${report.analyzedRunsCount} runs on ${new Date().toLocaleDateString()}`, PAGE_WIDTH / 2, y, { align: 'center' });
+    doc.text(`Analysis of ${report.analyzedRunsCount} Test Runs`, PAGE_WIDTH / 2, y, { align: 'center' });
+    y += 7;
+    doc.setFontSize(10);
+    doc.text(`Report Generated: ${new Date().toLocaleString()}`, PAGE_WIDTH / 2, y, { align: 'center' });
     y += 15;
 
-    // Scores
+    // --- SCORES ---
     if (report.apiTrend) {
-        doc.setFontSize(14);
-        doc.setTextColor(theme.colors.primary);
-        doc.text(`API Grade: ${report.apiTrend.grade} (${report.apiTrend.score}) - ${report.apiTrend.direction}`, MARGIN, y);
-        y += 8;
+        const usedHeight = drawGradeCircle(MARGIN, y, report.apiTrend, "API Performance (Backend)");
+        y += usedHeight;
     }
     if (report.webTrend) {
-        doc.setFontSize(14);
-        doc.setTextColor('#10b981'); // Greenish
-        doc.text(`Web Grade: ${report.webTrend.grade} (${report.webTrend.score}) - ${report.webTrend.direction}`, MARGIN, y);
-        y += 12;
+        const usedHeight = drawGradeCircle(MARGIN, y, report.webTrend, "Web Performance (Frontend)");
+        y += usedHeight;
+    }
+    y += 5;
+
+    // --- TEXT SECTIONS ---
+    y = drawSection('Overall Trend Summary', report.overallTrendSummary || '', y);
+    y = drawSection('Performance Threshold', report.performanceThreshold || '', y);
+    y = drawSection('Key Observations', report.keyObservations || [], y);
+    y = drawSection('Suggested Root Cause', report.rootCauseSuggestion || '', y);
+    y = drawSection('Recommendations', report.recommendations || [], y);
+    y = drawSection('Conclusive Summary', report.conclusiveSummary || '', y);
+
+    // --- CHART ---
+    if (chartElementId) {
+        const chart = await getChartImageData(chartElementId);
+        if (chart.dataUrl) {
+            if (y + chart.height > 280) { doc.addPage(); y = MARGIN; }
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(14);
+            doc.text('Performance Trend Charts', MARGIN, y);
+            y += 8;
+            doc.addImage(chart.dataUrl, 'PNG', MARGIN, y, CONTENT_WIDTH, chart.height);
+            y += chart.height + 10;
+        }
     }
 
-    // Summary
+    // --- DATA TABLE ---
+    if (y + 40 > 280) { doc.addPage(); y = MARGIN; }
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(theme.fontSizes.h1);
-    doc.setTextColor(theme.colors.textDark);
-    doc.text('Executive Summary', MARGIN, y);
-    y += 7;
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(theme.fontSizes.body);
-    doc.setTextColor(theme.colors.text);
-    const summaryLines = doc.splitTextToSize(report.overallTrendSummary || '', CONTENT_WIDTH);
-    doc.text(summaryLines, MARGIN, y);
-    y += summaryLines.length * 5 + 10;
+    doc.setFontSize(14);
+    doc.text('Analyzed Test Runs Data', MARGIN, y);
+    y += 5;
 
-    // Chart
-    const chart = await getChartImageData(chartElementId);
-    if (chart.dataUrl) {
-        if (y + chart.height > 280) { doc.addPage(); y = MARGIN; }
-        doc.addImage(chart.dataUrl, 'PNG', MARGIN, y, CONTENT_WIDTH, chart.height);
-        y += chart.height + 10;
-    }
-
-    // Observations
-    if (y > 250) { doc.addPage(); y = MARGIN; }
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(theme.fontSizes.h1);
-    doc.setTextColor(theme.colors.textDark);
-    doc.text('Key Observations', MARGIN, y);
-    y += 8;
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(theme.fontSizes.body);
-    doc.setTextColor(theme.colors.text);
-    report.keyObservations?.forEach(obs => {
-        const lines = doc.splitTextToSize(`• ${obs}`, CONTENT_WIDTH);
-        doc.text(lines, MARGIN, y);
-        y += lines.length * 5 + 2;
-    });
-    
-    y += 10;
-
-    // Data Table
     const sortedRuns = [...runs].sort((a, b) => (Number(a.config?.users) || 0) - (Number(b.config?.users) || 0));
     autoTable(doc, {
         startY: y,
-        head: [['Type', 'Method', 'Title', 'Users', 'Duration', 'Throughput', 'Avg Latency', 'Errors']],
-        body: sortedRuns.map((r) => {
-            const isApi = r.config?.method !== 'GET' && r.config?.method !== 'HEAD';
-            return [
-                isApi ? 'API' : 'Web',
-                r.config?.method || '-',
-                r.title || '-',
-                r.config?.users || '-',
-                `${r.config?.duration}s`,
-                r.stats?.throughput.toFixed(1) || '-',
-                `${r.stats?.avgResponseTime.toFixed(0)}ms`,
-                `${r.stats?.errorCount}`
-            ];
+        head: [['Type', 'Method', 'Title', 'Profile', 'Avg Latency', 'Throughput', 'Error Rate']],
+        body: sortedRuns.map((run) => {
+            const config = (run.config || {}) as Partial<LoadTestConfig>;
+            const stats = run.stats;
+            const isApi = config.method !== 'GET' && config.method !== 'HEAD';
+            const typeText = isApi ? 'API' : 'Web';
+            
+            const profile = config.runMode === 'iterations' 
+                ? `${(Number(config.iterations) || 0).toLocaleString()} iter.` 
+                : `${config.users} users @ ${config.duration}s`;
+            
+            const avgLat = stats ? `${Number(stats.avgResponseTime).toFixed(0)} ms` : '-';
+            const tput = stats ? `${Number(stats.throughput).toFixed(2)}/s` : '-';
+            const errRate = stats && stats.totalRequests > 0 
+                ? `${((Number(stats.errorCount) / Number(stats.totalRequests)) * 100).toFixed(1)}%` 
+                : '0.0%';
+
+            return [typeText, config.method || '-', run.title || '-', profile, avgLat, tput, errRate];
         }),
         theme: 'striped',
+        headStyles: { fillColor: theme.colors.chartBg },
+        styles: { fontSize: 8 },
         columnStyles: {
             0: { fontStyle: 'bold' },
-            1: { fontStyle: 'bold', textColor: [50, 50, 50] },
-            2: { cellWidth: 40 }, // Limit title width
+            2: { cellWidth: 40 },
         }
     });
 
-    doc.save(`Trend_Analysis_${new Date().toISOString().split('T')[0]}.pdf`);
+    doc.save(`Trend_Analysis_Report_${new Date().toISOString().split('T')[0]}.pdf`);
 };
 
 export const exportTrendAnalysisAsDocx = async (

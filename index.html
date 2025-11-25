@@ -30,6 +30,45 @@
         },
       }
     </script>
+    <style>
+      @media print {
+        body * {
+          visibility: hidden;
+        }
+        #trend-analysis-modal-content, #trend-analysis-modal-content * {
+          visibility: visible;
+        }
+        #trend-analysis-modal-content {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          background-color: white !important;
+          color: black !important;
+          border: none;
+          box-shadow: none;
+        }
+        /* Ensure text colors are readable on white paper */
+        #trend-analysis-modal-content .text-gray-300,
+        #trend-analysis-modal-content .text-gray-400,
+        #trend-analysis-modal-content .text-gray-500 {
+          color: #333 !important;
+        }
+        #trend-analysis-modal-content .text-white {
+          color: #000 !important;
+        }
+        /* Hide the header buttons (Close, Export, Print) when printing */
+        #trend-analysis-modal-header-actions {
+          display: none !important;
+        }
+        /* Ensure charts and cards are visible */
+        #trend-analysis-modal-content .bg-gray-800, 
+        #trend-analysis-modal-content .bg-gray-900 {
+          background-color: #fff !important;
+          border: 1px solid #ccc !important;
+        }
+      }
+    </style>
   <script type="importmap">
 {
   "imports": {

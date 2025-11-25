@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { TrendAnalysisReport, TestRunSummary, TestStats, LoadTestConfig, TrendCategoryResult } from '../types';
-import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon, SparklesIcon, BoltIcon, GlobeAltIcon, WordIcon } from './icons';
+import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon, SparklesIcon, BoltIcon, GlobeAltIcon, WordIcon, PrinterIcon } from './icons';
 import { exportTrendAnalysisAsPdf, exportTrendAnalysisAsDocx } from '../services/exportService';
 import { refineTrendAnalysis } from '../services/geminiService';
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts';
@@ -310,6 +310,10 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
         }
     };
 
+    const handlePrint = () => {
+        window.print();
+    };
+
     const handleRefine = async (instruction: string) => {
         if (!report) return;
         setIsRefining(true);
@@ -336,6 +340,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
     return (
         <div className="fixed inset-0 bg-gray-950/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
             <div
+                id="trend-analysis-modal-content"
                 className="bg-gray-900 w-full max-w-6xl rounded-xl border border-gray-700 shadow-2xl flex flex-col max-h-[95vh]"
                 onClick={(e) => e.stopPropagation()}
             >
@@ -346,15 +351,24 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                             Multi-Test Trend Analysis {report && !isLoading ? `(${report.analyzedRunsCount} Runs)` : ''}
                         </h2>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div id="trend-analysis-modal-header-actions" className="flex items-center gap-2">
                         {report && !isLoading && (
-                            <button 
-                                onClick={() => setIsRefineOpen(true)} 
-                                className="flex items-center space-x-2 px-3 py-1.5 text-xs font-medium bg-blue-900/30 hover:bg-blue-800/50 text-blue-300 border border-blue-500/30 rounded-md transition"
-                            >
-                                <SparklesIcon className="w-4 h-4" />
-                                <span>Edit with AI</span>
-                            </button>
+                            <>
+                                <button 
+                                    onClick={handlePrint}
+                                    className="flex items-center space-x-2 px-3 py-1.5 text-xs font-medium bg-gray-700 hover:bg-gray-600 text-white rounded-md transition"
+                                >
+                                    <PrinterIcon className="w-4 h-4" />
+                                    <span>Print</span>
+                                </button>
+                                <button 
+                                    onClick={() => setIsRefineOpen(true)} 
+                                    className="flex items-center space-x-2 px-3 py-1.5 text-xs font-medium bg-blue-900/30 hover:bg-blue-800/50 text-blue-300 border border-blue-500/30 rounded-md transition"
+                                >
+                                    <SparklesIcon className="w-4 h-4" />
+                                    <span>Edit with AI</span>
+                                </button>
+                            </>
                         )}
                         <button onClick={onClose} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-colors">
                             <XMarkIcon className="w-6 h-6" />
@@ -538,7 +552,7 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                 </div>
 
                 <footer className="p-4 flex justify-between items-center border-t border-gray-700 flex-shrink-0">
-                    <div className="flex gap-3">
+                    <div id="trend-analysis-modal-header-actions" className="flex gap-3">
                         <button
                             onClick={handleExportPdf}
                             disabled={isLoading || !report || isExportingPdf || isExportingDocx}
