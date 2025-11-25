@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import type { TrendAnalysisReport, TestRunSummary, TestStats, LoadTestConfig, TrendCategoryResult } from '../types';
-import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon, SparklesIcon, BoltIcon, GlobeAltIcon } from './icons';
-import { exportTrendAnalysisAsPdf } from '../services/exportService';
+import { XMarkIcon, ScaleIcon, SpinnerIcon, ExclamationTriangleIcon, CheckCircleIcon, InformationCircleIcon, MagnifyingGlassIcon, WrenchIcon, DocumentArrowDownIcon, ChartBarSquareIcon, SparklesIcon, BoltIcon, GlobeAltIcon, WordIcon } from './icons';
+import { exportTrendAnalysisAsPdf, exportTrendAnalysisAsDocx } from '../services/exportService';
 import { refineTrendAnalysis } from '../services/geminiService';
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts';
 
@@ -274,13 +274,14 @@ const RefineDialog: React.FC<{
 };
 
 const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose, report, isLoading, runs, onUpdateReport }) => {
-    const [isExporting, setIsExporting] = useState(false);
+    const [isExportingPdf, setIsExportingPdf] = useState(false);
+    const [isExportingDocx, setIsExportingDocx] = useState(false);
     const [isRefineOpen, setIsRefineOpen] = useState(false);
     const [isRefining, setIsRefining] = useState(false);
 
-    const handleExport = async () => {
+    const handleExportPdf = async () => {
         if (!report || !runs) return;
-        setIsExporting(true);
+        setIsExportingPdf(true);
         try {
             // Capture main charts container
             await exportTrendAnalysisAsPdf(report, runs, 'trend-analysis-chart-container');
@@ -288,7 +289,20 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
             console.error("Failed to export trend analysis PDF:", e);
             alert(`Failed to generate PDF: ${e instanceof Error ? e.message : 'Unknown error'}`);
         } finally {
-            setIsExporting(false);
+            setIsExportingPdf(false);
+        }
+    };
+
+    const handleExportDocx = async () => {
+        if (!report || !runs) return;
+        setIsExportingDocx(true);
+        try {
+            await exportTrendAnalysisAsDocx(report, runs, 'trend-analysis-chart-container');
+        } catch (e) {
+            console.error("Failed to export trend analysis DOCX:", e);
+            alert(`Failed to generate Word document: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        } finally {
+            setIsExportingDocx(false);
         }
     };
 
@@ -513,14 +527,24 @@ const TrendAnalysisModal: React.FC<TrendAnalysisModalProps> = ({ isOpen, onClose
                 </div>
 
                 <footer className="p-4 flex justify-between items-center border-t border-gray-700 flex-shrink-0">
-                    <button
-                        onClick={handleExport}
-                        disabled={isLoading || !report || isExporting}
-                        className="flex items-center space-x-2 px-4 py-2 text-sm font-medium bg-gray-700 hover:bg-gray-600 text-white rounded-md transition disabled:opacity-50"
-                    >
-                        {isExporting ? <SpinnerIcon className="w-5 h-5 animate-spin" /> : <DocumentArrowDownIcon className="w-5 h-5" />}
-                        <span>{isExporting ? 'Exporting...' : 'Export to PDF'}</span>
-                    </button>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={handleExportPdf}
+                            disabled={isLoading || !report || isExportingPdf || isExportingDocx}
+                            className="flex items-center space-x-2 px-4 py-2 text-sm font-medium bg-gray-700 hover:bg-gray-600 text-white rounded-md transition disabled:opacity-50"
+                        >
+                            {isExportingPdf ? <SpinnerIcon className="w-5 h-5 animate-spin" /> : <DocumentArrowDownIcon className="w-5 h-5" />}
+                            <span>{isExportingPdf ? 'Exporting...' : 'Export to PDF'}</span>
+                        </button>
+                        <button
+                            onClick={handleExportDocx}
+                            disabled={isLoading || !report || isExportingPdf || isExportingDocx}
+                            className="flex items-center space-x-2 px-4 py-2 text-sm font-medium bg-blue-700 hover:bg-blue-600 text-white rounded-md transition disabled:opacity-50"
+                        >
+                            {isExportingDocx ? <SpinnerIcon className="w-5 h-5 animate-spin" /> : <WordIcon className="w-5 h-5" />}
+                            <span>{isExportingDocx ? 'Exporting...' : 'Export to Word'}</span>
+                        </button>
+                    </div>
                     <button
                         onClick={onClose}
                         className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md transition"

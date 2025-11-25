@@ -1,7 +1,9 @@
+
 import type { TestResultSample, LoadTestConfig, TestStats, PerformanceReport, KeyObservation, StructuredSummary, TestRun, TrendAnalysisReport, TestRunSummary, ComparisonAnalysisReport, ComparisonMetricChange, TrendCategoryResult } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, BorderStyle, WidthType, ImageRun, AlignmentType } from 'docx';
 
 
 const triggerDownload = (blob: Blob, filename: string) => {
@@ -51,8 +53,57 @@ export const exportAsCsv = (data: TestResultSample[]): void => {
   triggerDownload(blob, `load-test-results-${new Date().toISOString()}.csv`);
 };
 
+// --- SHARED HELPERS ---
 
-// --- NEW PROFESSIONAL PDF EXPORT ---
+const theme = {
+    colors: {
+        primary: '#3b82f6',
+        textDark: '#111827',
+        text: '#374151',
+        textLight: '#6b7280',
+        bgLight: '#f3f4f6', 
+        summaryBg: '#f9fafb',
+        summaryBorder: '#e5e7eb',
+        border: '#e5e7eb',
+        positive: '#10b981',
+        warning: '#f59e0b',
+        critical: '#ef4444',
+        chartBg: '#161b22',
+    },
+    fontSizes: {
+        title: 20,
+        h1: 16,
+        h2: 12,
+        body: 10,
+        small: 8,
+    },
+    margin: 15,
+};
+
+const getChartImageData = async (elementId: string): Promise<{ height: number, dataUrl: string }> => {
+    const chartElement = document.getElementById(elementId);
+    if (!chartElement) return { height: 0, dataUrl: '' };
+
+    try {
+        // Use a specialized config for better screenshot quality
+        const canvas = await html2canvas(chartElement, { 
+            scale: 2, 
+            useCORS: true, 
+            backgroundColor: theme.colors.chartBg,
+            logging: false
+        });
+        // A4 width in px at 72dpi is approx 595. We use mm in jsPDF (210mm width).
+        // We want the image to fit within margins (approx 180mm).
+        const contentWidthMm = 180;
+        const imgHeightMm = (canvas.height * contentWidthMm) / canvas.width;
+        return { height: imgHeightMm, dataUrl: canvas.toDataURL('image/png') };
+    } catch (e) {
+        console.error(`Failed to capture chart element "${elementId}".`, e);
+        return { height: 0, dataUrl: '' };
+    }
+};
+
+// --- MAIN PERFORMANCE REPORT PDF ---
 
 export const exportAsPdf = async (
     title: string, 
@@ -65,31 +116,6 @@ export const exportAsPdf = async (
     const doc = new jsPDF('p', 'mm', 'a4');
     let y = 0;
 
-    // --- THEME & LAYOUT CONSTANTS ---
-    const theme = {
-        colors: {
-            primary: '#3b82f6',
-            textDark: '#111827',
-            text: '#374151',
-            textLight: '#6b7280',
-            bgLight: '#f3f4f6', 
-            summaryBg: '#f9fafb',
-            summaryBorder: '#e5e7eb',
-            border: '#e5e7eb',
-            positive: '#10b981',
-            warning: '#f59e0b',
-            critical: '#ef4444',
-            chartBg: '#161b22',
-        },
-        fontSizes: {
-            title: 20,
-            h1: 16,
-            h2: 12,
-            body: 10,
-            small: 8,
-        },
-        margin: 15,
-    };
     const PAGE_WIDTH = doc.internal.pageSize.getWidth();
     const PAGE_HEIGHT = doc.internal.pageSize.getHeight();
     const CONTENT_WIDTH = PAGE_WIDTH - theme.margin * 2;
@@ -244,22 +270,6 @@ export const exportAsPdf = async (
         }
         
         y += height + LINE_HEIGHT * 2;
-    };
-    
-    // --- HEIGHT CALCULATION HELPERS ---
-    const getChartImageData = async (elementId: string): Promise<{ height: number, dataUrl: string }> => {
-        const chartElement = document.getElementById(elementId);
-        if (!chartElement) return { height: 0, dataUrl: '' };
-
-        try {
-            const canvas = await html2canvas(chartElement, { scale: 2, useCORS: true, backgroundColor: theme.colors.chartBg });
-            const imgWidth = CONTENT_WIDTH;
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-            return { height: imgHeight, dataUrl: canvas.toDataURL('image/png') };
-        } catch (e) {
-            console.error(`Failed to capture chart element "${elementId}".`, e);
-            return { height: 0, dataUrl: '' };
-        }
     };
     
     const calculateStructuredSummaryHeight = (summary: StructuredSummary | string | null | undefined): number => {
@@ -517,731 +527,390 @@ export const exportAsPdf = async (
     doc.save(`Performance_Report_${title.replace(/\s/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
 };
 
+// --- COMPARISON PDF ---
+
 export const exportComparisonAsPdf = async (
-    runA: TestRun,
-    runB: TestRun,
+    runA: TestRun, 
+    runB: TestRun, 
     chartElementIds: string[],
     report: ComparisonAnalysisReport | null
 ): Promise<void> => {
     const doc = new jsPDF('p', 'mm', 'a4');
-    let y = 0;
-
-    const theme = {
-        colors: {
-            primary: '#3b82f6',
-            textDark: '#111827',
-            text: '#374151',
-            textLight: '#6b7280',
-            bgLight: '#f3f4f6',
-            border: '#e5e7eb',
-            chartBg: '#1f2937', // dark gray for chart background capture
-        },
-        fontSizes: {
-            title: 20,
-            h1: 16,
-            h2: 12,
-            body: 10,
-            small: 8,
-        },
-        margin: 15,
-    };
     const PAGE_WIDTH = doc.internal.pageSize.getWidth();
-    const PAGE_HEIGHT = doc.internal.pageSize.getHeight();
     const CONTENT_WIDTH = PAGE_WIDTH - theme.margin * 2;
-    const LINE_HEIGHT = 5.5;
+    const MARGIN = theme.margin;
+    let y = MARGIN;
 
-    const checkPageBreak = (neededHeight: number) => {
-        if (y + neededHeight > PAGE_HEIGHT - theme.margin) {
-            doc.addPage();
-            y = theme.margin;
-        }
-    };
+    // Title Page
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(theme.fontSizes.title);
+    doc.text('Test Run Comparison Report', PAGE_WIDTH / 2, y + 10, { align: 'center' });
+    y += 20;
+    
+    doc.setFontSize(theme.fontSizes.h2);
+    doc.setTextColor(theme.colors.textLight);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, PAGE_WIDTH / 2, y, { align: 'center' });
+    y += 20;
 
-    const drawSectionHeader = (text: string) => {
-        checkPageBreak(20);
-        y += 5;
+    // Run Details Table
+    autoTable(doc, {
+        startY: y,
+        head: [['Metric', `Baseline: ${runA.title}`, `Comparison: ${runB.title}`]],
+        body: [
+            ['Date', new Date(runA.created_at).toLocaleDateString(), new Date(runB.created_at).toLocaleDateString()],
+            ['Users', runA.config.users.toString(), runB.config.users.toString()],
+            ['Duration', `${runA.config.duration}s`, `${runB.config.duration}s`],
+            ['Throughput', `${runA.stats.throughput.toFixed(2)}/s`, `${runB.stats.throughput.toFixed(2)}/s`],
+            ['Avg Latency', `${runA.stats.avgResponseTime.toFixed(0)}ms`, `${runB.stats.avgResponseTime.toFixed(0)}ms`],
+            ['Error Rate', `${((runA.stats.errorCount/runA.stats.totalRequests)*100).toFixed(1)}%`, `${((runB.stats.errorCount/runB.stats.totalRequests)*100).toFixed(1)}%`]
+        ],
+        headStyles: { fillColor: theme.colors.chartBg },
+        styles: { fontSize: 10, cellPadding: 4 },
+        theme: 'grid'
+    });
+    
+    // @ts-ignore
+    y = doc.lastAutoTable.finalY + 15;
+
+    // Executive Summary
+    if (report) {
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(theme.fontSizes.h1);
         doc.setTextColor(theme.colors.textDark);
-        doc.text(text, theme.margin, y);
-        y += 2;
-        doc.setDrawColor(theme.colors.border);
-        doc.line(theme.margin, y + 1, PAGE_WIDTH - theme.margin, y + 1);
+        doc.text('Executive Summary', MARGIN, y);
         y += 8;
-    };
-
-    const drawTextParagraph = (text: string) => {
+        
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(theme.fontSizes.body);
         doc.setTextColor(theme.colors.text);
-        const lines = doc.splitTextToSize(text, CONTENT_WIDTH);
-        checkPageBreak(lines.length * LINE_HEIGHT + 2);
-        doc.text(lines, theme.margin, y);
-        y += lines.length * LINE_HEIGHT + 4;
-    };
-
-    // Title
-    y = theme.margin + 5;
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(theme.fontSizes.title);
-    doc.setTextColor(theme.colors.textDark);
-    doc.text('Performance Comparison Report', PAGE_WIDTH / 2, y, { align: 'center' });
-    y += 8;
-    doc.setFontSize(theme.fontSizes.body);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(theme.colors.textLight);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, PAGE_WIDTH / 2, y, { align: 'center' });
-    y += 15;
-
-    // Config Comparison Table
-    drawSectionHeader('Configuration Comparison');
-    autoTable(doc, {
-        startY: y,
-        head: [['Parameter', `Baseline (${runA.title})`, `Comparison (${runB.title})`]],
-        body: [
-            ['Users', runA.config.users, runB.config.users],
-            ['Duration', `${runA.config.duration}s`, `${runB.config.duration}s`],
-            ['Load Profile', runA.config.loadProfile, runB.config.loadProfile],
-            ['Run Mode', runA.config.runMode, runB.config.runMode],
-        ],
-        theme: 'striped',
-        headStyles: { fillColor: [59, 130, 246] }, // blue-500
-        margin: { left: theme.margin, right: theme.margin },
-        styles: { fontSize: 10, cellPadding: 3 },
-    });
-    y = (doc as any).lastAutoTable.finalY + 10;
-
-    // Stats Comparison Table
-    drawSectionHeader('Key Metrics Comparison');
-    
-    // Helper to calc delta
-    const calcDelta = (valA: number, valB: number, isPercent = false) => {
-        if (!valA) return '-';
-        const delta = valB - valA;
-        const pct = (delta / valA) * 100;
-        return `${delta >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
-    };
-
-    const statsA = runA.stats;
-    const statsB = runB.stats;
-
-    autoTable(doc, {
-        startY: y,
-        head: [['Metric', 'Baseline', 'Comparison', 'Change']],
-        body: [
-            ['Throughput', `${statsA.throughput.toFixed(2)}/s`, `${statsB.throughput.toFixed(2)}/s`, calcDelta(statsA.throughput, statsB.throughput)],
-            ['Avg Latency', `${statsA.avgResponseTime.toFixed(0)}ms`, `${statsB.avgResponseTime.toFixed(0)}ms`, calcDelta(statsA.avgResponseTime, statsB.avgResponseTime)],
-            ['Error Rate', `${((statsA.errorCount / statsA.totalRequests) * 100).toFixed(2)}%`, `${((statsB.errorCount / statsB.totalRequests) * 100).toFixed(2)}%`, calcDelta((statsA.errorCount / statsA.totalRequests), (statsB.errorCount / statsB.totalRequests))],
-            ['Apdex Score', statsA.apdexScore.toFixed(2), statsB.apdexScore.toFixed(2), calcDelta(statsA.apdexScore, statsB.apdexScore)],
-        ],
-        theme: 'grid',
-        headStyles: { fillColor: [59, 130, 246] },
-        margin: { left: theme.margin, right: theme.margin },
-        styles: { fontSize: 10, cellPadding: 3 },
-    });
-    y = (doc as any).lastAutoTable.finalY + 10;
-
-    // AI Report Content
-    if (report) {
-        checkPageBreak(40);
-        drawSectionHeader('AI Analysis');
-        
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(theme.fontSizes.h2);
-        doc.text('Executive Summary', theme.margin, y);
-        y += 6;
-        drawTextParagraph(report.comparisonSummary);
-
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(theme.fontSizes.h2);
-        doc.text('Root Cause Analysis', theme.margin, y);
-        y += 6;
-        drawTextParagraph(report.rootCauseAnalysis);
-
-        checkPageBreak(40);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(theme.fontSizes.h2);
-        doc.text('Recommendations', theme.margin, y);
-        y += 6;
-        report.recommendations.forEach(rec => {
-            drawTextParagraph(`• ${rec}`);
-        });
+        const lines = doc.splitTextToSize(report.comparisonSummary, CONTENT_WIDTH);
+        doc.text(lines, MARGIN, y);
+        y += lines.length * 5 + 10;
     }
 
     // Charts
-    if (chartElementIds.length > 0) {
-        doc.addPage();
-        y = theme.margin;
-        drawSectionHeader('Visual Comparison');
+    if (chartElementIds.length === 2) {
+        if (y > 200) { doc.addPage(); y = MARGIN; }
+        
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(theme.fontSizes.h1);
+        doc.text('Performance Timeline Comparison', MARGIN, y);
+        y += 10;
 
-        for (let i = 0; i < chartElementIds.length; i++) {
-            const elId = chartElementIds[i];
-            const runTitle = i === 0 ? `Baseline: ${runA.title}` : `Comparison: ${runB.title}`;
-            
-            const chartElement = document.getElementById(elId);
-            if (chartElement) {
-                try {
-                    const canvas = await html2canvas(chartElement, { scale: 2, useCORS: true, backgroundColor: theme.colors.chartBg });
-                    const imgHeight = (canvas.height * CONTENT_WIDTH) / canvas.width;
-                    
-                    checkPageBreak(imgHeight + 15);
-                    
-                    doc.setFontSize(theme.fontSizes.h2);
-                    doc.setFont('helvetica', 'bold');
-                    doc.text(runTitle, theme.margin, y);
-                    y += 5;
-
-                    doc.addImage(canvas.toDataURL('image/png'), 'PNG', theme.margin, y, CONTENT_WIDTH, imgHeight);
-                    y += imgHeight + 10;
-                } catch (e) {
-                    console.error("Error capturing chart", e);
-                }
-            }
+        const chartA = await getChartImageData(chartElementIds[0]);
+        if (chartA.dataUrl) {
+            doc.setFontSize(10);
+            doc.text('Baseline', MARGIN, y);
+            doc.addImage(chartA.dataUrl, 'PNG', MARGIN, y + 2, CONTENT_WIDTH, chartA.height);
+            y += chartA.height + 10;
         }
+
+        if (y > 200) { doc.addPage(); y = MARGIN; }
+
+        const chartB = await getChartImageData(chartElementIds[1]);
+        if (chartB.dataUrl) {
+            doc.text('Comparison', MARGIN, y);
+            doc.addImage(chartB.dataUrl, 'PNG', MARGIN, y + 2, CONTENT_WIDTH, chartB.height);
+            y += chartB.height + 10;
+        }
+    }
+
+    // Detailed Analysis
+    if (report) {
+        doc.addPage();
+        y = MARGIN;
+        
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(theme.fontSizes.h1);
+        doc.text('Detailed Analysis', MARGIN, y);
+        y += 10;
+
+        doc.setFontSize(theme.fontSizes.h2);
+        doc.text('Root Cause Analysis', MARGIN, y);
+        y += 6;
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(theme.fontSizes.body);
+        const rcLines = doc.splitTextToSize(report.rootCauseAnalysis, CONTENT_WIDTH);
+        doc.text(rcLines, MARGIN, y);
+        y += rcLines.length * 5 + 10;
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(theme.fontSizes.h2);
+        doc.text('Recommendations', MARGIN, y);
+        y += 6;
+        doc.setFont('helvetica', 'normal');
+        report.recommendations.forEach(rec => {
+            const recLines = doc.splitTextToSize(`• ${rec}`, CONTENT_WIDTH);
+            doc.text(recLines, MARGIN, y);
+            y += recLines.length * 5 + 2;
+        });
     }
 
     doc.save(`Comparison_Report_${new Date().toISOString().split('T')[0]}.pdf`);
 };
 
+// --- TREND ANALYSIS EXPORTS ---
+
 export const exportTrendAnalysisAsPdf = async (
+    report: TrendAnalysisReport,
+    runs: TestRunSummary[],
+    chartElementId: string
+): Promise<void> => {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const PAGE_WIDTH = doc.internal.pageSize.getWidth();
+    const CONTENT_WIDTH = PAGE_WIDTH - theme.margin * 2;
+    const MARGIN = theme.margin;
+    let y = MARGIN;
+
+    // Title
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(theme.fontSizes.title);
+    doc.setTextColor(theme.colors.textDark);
+    doc.text('Trend Analysis Report', PAGE_WIDTH / 2, y + 10, { align: 'center' });
+    y += 20;
+
+    doc.setFontSize(theme.fontSizes.h2);
+    doc.setTextColor(theme.colors.textLight);
+    doc.text(`Analyzed ${report.analyzedRunsCount} runs on ${new Date().toLocaleDateString()}`, PAGE_WIDTH / 2, y, { align: 'center' });
+    y += 15;
+
+    // Scores
+    if (report.apiTrend) {
+        doc.setFontSize(14);
+        doc.setTextColor(theme.colors.primary);
+        doc.text(`API Grade: ${report.apiTrend.grade} (${report.apiTrend.score}) - ${report.apiTrend.direction}`, MARGIN, y);
+        y += 8;
+    }
+    if (report.webTrend) {
+        doc.setFontSize(14);
+        doc.setTextColor('#10b981'); // Greenish
+        doc.text(`Web Grade: ${report.webTrend.grade} (${report.webTrend.score}) - ${report.webTrend.direction}`, MARGIN, y);
+        y += 12;
+    }
+
+    // Summary
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(theme.fontSizes.h1);
+    doc.setTextColor(theme.colors.textDark);
+    doc.text('Executive Summary', MARGIN, y);
+    y += 7;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(theme.fontSizes.body);
+    doc.setTextColor(theme.colors.text);
+    const summaryLines = doc.splitTextToSize(report.overallTrendSummary || '', CONTENT_WIDTH);
+    doc.text(summaryLines, MARGIN, y);
+    y += summaryLines.length * 5 + 10;
+
+    // Chart
+    const chart = await getChartImageData(chartElementId);
+    if (chart.dataUrl) {
+        if (y + chart.height > 280) { doc.addPage(); y = MARGIN; }
+        doc.addImage(chart.dataUrl, 'PNG', MARGIN, y, CONTENT_WIDTH, chart.height);
+        y += chart.height + 10;
+    }
+
+    // Observations
+    if (y > 250) { doc.addPage(); y = MARGIN; }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(theme.fontSizes.h1);
+    doc.setTextColor(theme.colors.textDark);
+    doc.text('Key Observations', MARGIN, y);
+    y += 8;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(theme.fontSizes.body);
+    doc.setTextColor(theme.colors.text);
+    report.keyObservations?.forEach(obs => {
+        const lines = doc.splitTextToSize(`• ${obs}`, CONTENT_WIDTH);
+        doc.text(lines, MARGIN, y);
+        y += lines.length * 5 + 2;
+    });
+    
+    y += 10;
+
+    // Data Table
+    const sortedRuns = [...runs].sort((a, b) => (Number(a.config?.users) || 0) - (Number(b.config?.users) || 0));
+    autoTable(doc, {
+        startY: y,
+        head: [['Run', 'Users', 'Duration', 'Throughput', 'Avg Latency', 'Errors']],
+        body: sortedRuns.map((r, i) => [
+            `Run ${i+1}`,
+            r.config?.users || '-',
+            `${r.config?.duration}s`,
+            r.stats?.throughput.toFixed(1) || '-',
+            `${r.stats?.avgResponseTime.toFixed(0)}ms`,
+            `${r.stats?.errorCount}`
+        ]),
+        theme: 'striped'
+    });
+
+    doc.save(`Trend_Analysis_${new Date().toISOString().split('T')[0]}.pdf`);
+};
+
+export const exportTrendAnalysisAsDocx = async (
     report: TrendAnalysisReport,
     runs: TestRunSummary[],
     chartElementId?: string
 ): Promise<void> => {
-    const doc = new jsPDF('p', 'mm', 'a4');
-    let y = 0;
-
-    const theme = {
-        colors: {
-            primary: '#3b82f6',
-            textDark: '#111827',
-            text: '#374151',
-            textLight: '#6b7280',
-            bgLight: '#f1f5f9', // Slate-100
-            summaryBg: '#f8fafc', // Slate-50
-            summaryBorder: '#e5e7eb',
-            border: '#e5e7eb',
-            latency: '#3b82f6',
-            throughput: '#16a34a',
-            error: '#dc2626',
-            warningBg: '#fffbeb',
-            warningBorder: '#fde68a',
-            warningText: '#78350f',
-            conclusiveBg: '#dbeafe',
-            conclusiveBorder: '#bfdbfe',
-            // New Light Blue Theme
-            cardBg: '#eff6ff', // blue-50
-            cardBorder: '#bfdbfe', // blue-200
-            chartBg: '#111827',
-        },
-        fontSizes: { title: 20, h1: 16, h2: 12, body: 10, small: 8 },
-        margin: 15,
-    };
-    const PAGE_WIDTH = doc.internal.pageSize.getWidth();
-    const PAGE_HEIGHT = doc.internal.pageSize.getHeight();
-    const CONTENT_WIDTH = PAGE_WIDTH - theme.margin * 2;
-    const LINE_HEIGHT = 5.5;
-
-    const checkPageBreak = (neededHeight: number) => { if (y + neededHeight > PAGE_HEIGHT - theme.margin) { doc.addPage(); y = theme.margin; } };
-    
-    const drawSectionHeader = (text: string, keepWithNextHeight = 0) => {
-        const headerHeight = 24;
-        checkPageBreak(headerHeight + keepWithNextHeight);
-        y += 10;
-        doc.setFontSize(theme.fontSizes.h1); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.textDark);
-        doc.text(text, theme.margin, y);
-        y += 6;
-        doc.setDrawColor(theme.colors.border);
-        doc.line(theme.margin, y, PAGE_WIDTH - theme.margin, y);
-        y += 8;
-    };
-    
-    const drawTextBlock = (text: string, options: { isQuote?: boolean, bgColor?: string, borderColor?: string, textColor?: string } = {}) => {
-        const height = calculateTextBlockHeight(text, options);
-        // Page break logic is now handled by the preceding drawSectionHeader call
-        const startY = y;
-        const textStartY = options.bgColor ? startY + 8 : startY;
-        const textStartX = theme.margin + (options.isQuote ? 10 : 4);
-
-        if (options.bgColor) {
-            doc.setFillColor(options.bgColor);
-            doc.setDrawColor(options.borderColor || options.bgColor);
-            doc.roundedRect(theme.margin, startY, CONTENT_WIDTH, height - 5, 3, 3, 'FD');
-        }
-
-        doc.setFontSize(theme.fontSizes.body);
-        doc.setFont('helvetica', options.isQuote ? 'italic' : 'normal');
-        doc.setTextColor(options.textColor || theme.colors.text);
-
-        if (options.isQuote) {
-            const lines = doc.splitTextToSize(text, CONTENT_WIDTH - (options.isQuote ? 14 : 8));
-            const textHeight = lines.length * LINE_HEIGHT;
-            doc.setDrawColor(options.borderColor || theme.colors.primary);
-            doc.setLineWidth(1);
-            doc.line(theme.margin + 4, textStartY - 4, theme.margin + 4, textStartY + textHeight);
-        }
-        
-        const lines = doc.splitTextToSize(text, CONTENT_WIDTH - (options.isQuote ? 14 : 8));
-        let currentLineY = textStartY;
-        lines.forEach((line: string) => {
-            doc.text(line, textStartX, currentLineY);
-            currentLineY += LINE_HEIGHT;
-        });
-        
-        y = startY + height;
-    };
-
-    const calculateTextBlockHeight = (text: string, options: { isQuote?: boolean, bgColor?: string } = {}): number => {
-        const textBlockWidth = CONTENT_WIDTH - (options.isQuote ? 14 : 8);
-        const lines = doc.splitTextToSize(text, textBlockWidth);
-        const textHeight = lines.length * LINE_HEIGHT;
-        const neededHeight = textHeight + (options.bgColor ? 16 : 0);
-        return neededHeight + 5; // bottom margin
-    };
-
-    const getChartImageData = async (elementId: string): Promise<{ height: number, dataUrl: string }> => {
-        const chartElement = document.getElementById(elementId);
-        if (!chartElement) return { height: 0, dataUrl: '' };
-
+    // Helper to get chart image base64
+    const getChartImage = async (elementId: string): Promise<string | null> => {
+        const element = document.getElementById(elementId);
+        if (!element) return null;
         try {
-            // Capture with dark background for consistency, but we place it on white paper
-            const canvas = await html2canvas(chartElement, { scale: 2, useCORS: true, backgroundColor: theme.colors.chartBg });
-            const imgWidth = CONTENT_WIDTH;
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-            return { height: imgHeight, dataUrl: canvas.toDataURL('image/png') };
-        } catch (e) {
-            console.error(`Failed to capture chart element "${elementId}".`, e);
-            return { height: 0, dataUrl: '' };
+            const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: '#111827' });
+            return canvas.toDataURL('image/png');
+        } catch {
+            return null;
         }
     };
 
-    // --- MODIFIED: Score Card Drawing Function to support custom data ---
-    // Now accepts a specific trend result object instead of reading from the main report object.
-    const drawScoreCard = (trend: TrendCategoryResult, title: string) => {
-        const cardHeight = 50;
-        
-        // Light Blue Background (#eff6ff / rgb(239, 246, 255)) & Strong Border (#bfdbfe / rgb(191, 219, 254))
-        doc.setDrawColor(191, 219, 254); 
-        doc.setFillColor(239, 246, 255); 
-        doc.roundedRect(theme.margin, y, CONTENT_WIDTH, cardHeight, 3, 3, 'FD');
+    const chartImage = chartElementId ? await getChartImage(chartElementId) : null;
 
-        const circleX = theme.margin + 20;
-        const circleY = y + 25;
-        const radius = 12;
-        
-        let gradeColor = [107, 114, 128]; // gray
-        if (trend.grade === 'A') gradeColor = [22, 163, 74];
-        else if (trend.grade === 'B') gradeColor = [37, 99, 235];
-        else if (trend.grade === 'C') gradeColor = [202, 138, 4]; // Darker yellow/orange for readability
-        else gradeColor = [220, 38, 38];
+    const sortedRuns = [...runs].sort((a, b) => (Number(a.config?.users) || 0) - (Number(b.config?.users) || 0));
 
-        // Draw Grade Circle
-        doc.setDrawColor(gradeColor[0], gradeColor[1], gradeColor[2]);
-        doc.setLineWidth(1.5);
-        doc.circle(circleX, circleY, radius, 'S');
-        doc.setLineWidth(0.1); // Reset line width
+    // Construct document structure
+    const children: any[] = [
+        new Paragraph({
+            text: "Trend Analysis Report",
+            heading: HeadingLevel.TITLE,
+            alignment: AlignmentType.CENTER,
+        }),
+        new Paragraph({
+            children: [
+                new TextRun({
+                    text: `Analysis of ${report.analyzedRunsCount} Test Runs`,
+                    size: 28,
+                    color: "6b7280",
+                }),
+            ],
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 400 },
+        }),
+        new Paragraph({
+            text: `Report Generated: ${new Date().toLocaleString()}`,
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 600 },
+        }),
+    ];
 
-        // Grade Text
-        doc.setFontSize(24);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(gradeColor[0], gradeColor[1], gradeColor[2]);
-        doc.text(trend.grade, circleX, circleY + 2.5, { align: 'center' });
-
-        // Info Text
-        const textX = circleX + radius + 15;
-        doc.setFontSize(14);
-        doc.setTextColor(theme.colors.textDark);
-        doc.text(title, textX, y + 15);
-        
-        doc.setFontSize(12);
-        doc.setTextColor(gradeColor[0], gradeColor[1], gradeColor[2]);
-        const direction = trend.direction;
-        doc.text(`${direction} (${trend.score}/100)`, textX, y + 22);
-
-        // Rationale Box (Right side) - White for contrast against light blue
-        const rationaleX = textX + 80; // Increased offset for wider titles
-        const rationaleWidth = CONTENT_WIDTH - (rationaleX - theme.margin) - 5;
-        const rationaleHeight = cardHeight - 10;
-        
-        // Ensure rationale box doesn't overlap if title is very long or screen is narrow (PDF logic)
-        if (rationaleWidth > 50) {
-            doc.setFillColor(255, 255, 255); // White inner box
-            doc.setDrawColor(191, 219, 254); // matching border
-            doc.roundedRect(rationaleX, y + 5, rationaleWidth, rationaleHeight, 2, 2, 'FD');
-            
-            doc.setFontSize(9);
-            doc.setTextColor(theme.colors.textDark);
-            doc.setFont('helvetica', 'bold');
-            doc.text('Rating Rationale:', rationaleX + 4, y + 12);
-            
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(theme.colors.text);
-            const splitRationale = doc.splitTextToSize(trend.rationale, rationaleWidth - 8);
-            doc.text(splitRationale, rationaleX + 4, y + 18);
-        }
-
-        y += cardHeight + 10;
-    };
-
-    // --- NEW: Grading Legend Function ---
-    const drawGradingLegend = () => {
-        const legendY = y;
-        doc.setFontSize(8);
-        doc.setTextColor(107, 114, 128); // gray-500
-        doc.setFont('helvetica', 'bold');
-        doc.text("GRADING LEGEND (RELIABILITY FOCUS)", PAGE_WIDTH / 2, legendY, { align: 'center' });
-        
-        y += 3;
-        const startY = y;
-        const itemWidth = (CONTENT_WIDTH) / 5;
-        const boxHeight = 14;
-        
-        const grades = [
-            { letter: 'A', score: '90-100', desc: 'Near-Perfect (>99.5%)', color: [22, 163, 74], bg: [220, 252, 231], border: [22, 163, 74] }, 
-            { letter: 'B', score: '80-89', desc: 'Excellent (>98%)', color: [37, 99, 235], bg: [219, 234, 254], border: [37, 99, 235] }, 
-            { letter: 'C', score: '70-79', desc: 'Good (>95%)', color: [202, 138, 4], bg: [254, 249, 195], border: [202, 138, 4] }, 
-            { letter: 'D', score: '60-69', desc: 'Fair (>90%)', color: [234, 88, 12], bg: [255, 237, 213], border: [234, 88, 12] }, 
-            { letter: 'F', score: '0-59', desc: 'Poor (<90%)', color: [220, 38, 38], bg: [254, 226, 226], border: [220, 38, 38] } 
-        ];
-
-        grades.forEach((g, i) => {
-            const x = theme.margin + (i * itemWidth) + (i > 0 ? 2 : 0); 
-            const actualWidth = itemWidth - 2;
-
-            doc.setDrawColor(g.border[0], g.border[1], g.border[2]);
-            doc.setLineWidth(0.1);
-            doc.setFillColor(g.bg[0], g.bg[1], g.bg[2]);
-            doc.roundedRect(x, startY, actualWidth, boxHeight, 2, 2, 'FD');
-            
-            doc.setTextColor(g.color[0], g.color[1], g.color[2]);
-            
-            // Grade + Score
-            doc.setFontSize(9);
-            doc.setFont('helvetica', 'bold');
-            doc.text(`${g.letter} (${g.score})`, x + (actualWidth/2), startY + 5, { align: 'center' });
-            
-            // Description
-            doc.setFontSize(7);
-            doc.setFont('helvetica', 'normal');
-            doc.text(g.desc, x + (actualWidth/2), startY + 10, { align: 'center' });
-        });
-
-        y += boxHeight + 10;
-    };
-
-    const drawTrendRunCard = (run: TestRunSummary, x: number, yPos: number, width: number, height: number) => {
-        // Card Container - Use Very Light Blue for contrast (Sky-50)
-        doc.setFillColor(240, 249, 255); 
-        doc.setDrawColor(theme.colors.border);
-        doc.roundedRect(x, yPos, width, height, 3, 3, 'FD');
-
-        const config: Partial<LoadTestConfig> = run.config || {};
-        const stats = run.stats;
-        if (!stats) return;
-
-        const totalRequests = Number(stats.totalRequests) || 0;
-        const successCount = Number(stats.successCount) || 0;
-        const successRate = totalRequests > 0 ? (successCount / totalRequests) * 100 : 0;
-        const peakUsers = config.users || 0;
-        const isIterationMode = config.runMode === 'iterations';
-
-        // Header: Profile & Date
-        const profileText = isIterationMode ? 'Iterations' : (config.loadProfile === 'stair-step' ? 'Stair Step' : 'Ramp Up');
-        const dateText = new Date(run.created_at).toLocaleDateString();
-
-        // Badge Color based on Profile Type
-        const isStairStep = config.loadProfile === 'stair-step';
-        if (isStairStep) {
-            doc.setFillColor(124, 58, 237); // Purple (violet-600)
-        } else {
-            doc.setFillColor(37, 99, 235); // Blue (blue-600)
-        }
-        
-        // Badge Rect
-        doc.roundedRect(x + 4, yPos + 4, 25, 6, 1, 1, 'F');
-        
-        // Badge Text (White for contrast)
-        doc.setFontSize(7); 
-        doc.setFont('helvetica', 'bold'); 
-        doc.setTextColor(255, 255, 255);
-        doc.text(profileText, x + 16.5, yPos + 8, { align: 'center' });
-
-        doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(theme.colors.textLight);
-        doc.text(dateText, x + width - 4, yPos + 8, { align: 'right' });
-
-        // Section 1: Peak Users Box
-        const boxHeight = 18;
-        let currentY = yPos + 14;
-        
-        doc.setFillColor(255, 255, 255); // White inner box for contrast
-        doc.setDrawColor(229, 231, 235); // border-gray-200
-        doc.roundedRect(x + 4, currentY, width - 8, boxHeight, 1, 1, 'FD');
-        
-        doc.setFontSize(7); doc.setTextColor(theme.colors.textLight);
-        doc.text('PEAK CONCURRENT USERS', x + 8, currentY + 5);
-        
-        doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.textDark);
-        doc.text(peakUsers.toString(), x + 8, currentY + 14);
-        doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(theme.colors.textLight);
-        const usersLabelWidth = doc.getStringUnitWidth(peakUsers.toString()) * 14 * 0.3527;
-        doc.text('users', x + 8 + usersLabelWidth + 2, currentY + 14);
-
-        // Section 2: Successful Submissions Box
-        currentY += boxHeight + 4;
-        doc.setFillColor(255, 255, 255); // White inner box
-        doc.setDrawColor(229, 231, 235); 
-        doc.roundedRect(x + 4, currentY, width - 8, boxHeight + 6, 1, 1, 'FD');
-
-        doc.setFontSize(7); doc.setTextColor(theme.colors.textLight);
-        doc.text('SUCCESSFUL SUBMISSIONS', x + 8, currentY + 5);
-
-        doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(22, 163, 74); // Green
-        doc.text(successCount.toLocaleString(), x + 8, currentY + 14);
-        
-        // Progress Bar Background
-        const barY = currentY + 18;
-        const barWidth = width - 16;
-        doc.setFillColor(229, 231, 235); // gray-200
-        doc.rect(x + 8, barY, barWidth, 2, 'F');
-        
-        // Progress Bar Fill
-        const fillWidth = (barWidth * successRate) / 100;
-        if (successRate > 99.5) doc.setFillColor(22, 163, 74);
-        else if (successRate > 95) doc.setFillColor(234, 179, 8);
-        else doc.setFillColor(220, 38, 38);
-        doc.rect(x + 8, barY, fillWidth, 2, 'F');
-
-        // Footer: Latency & Throughput
-        currentY += boxHeight + 6 + 4;
-        doc.setDrawColor(229, 231, 235);
-        doc.line(x + 4, currentY, x + width - 4, currentY);
-        currentY += 5;
-
-        doc.setFontSize(7); doc.setTextColor(theme.colors.textLight);
-        doc.text('AVG LATENCY', x + 8, currentY);
-        doc.text('THROUGHPUT', x + width / 2 + 4, currentY);
-
-        currentY += 5;
-        doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.latency);
-        doc.text(`${(Number(stats.avgResponseTime) || 0).toFixed(0)}ms`, x + 8, currentY);
-        
-        doc.setTextColor(theme.colors.throughput);
-        doc.text(`${(Number(stats.throughput) || 0).toFixed(1)}/s`, x + width / 2 + 4, currentY);
-    };
-
-
-    // --- PDF GENERATION START ---
-    
-    y = 40; // Start a bit lower
-    doc.setFontSize(theme.fontSizes.title); doc.setFont('helvetica', 'bold'); doc.setTextColor(theme.colors.textDark);
-    doc.text('Multi-Test Trend Analysis', PAGE_WIDTH / 2, y, { align: 'center' });
-    y += 10;
-    doc.setFontSize(theme.fontSizes.h1); doc.setFont('helvetica', 'normal'); doc.setTextColor(theme.colors.textLight);
-    doc.text(`Analysis of ${report.analyzedRunsCount} Test Runs`, PAGE_WIDTH / 2, y, { align: 'center' });
-    y += 15;
-    doc.setFontSize(theme.fontSizes.small); doc.setTextColor(theme.colors.textLight);
-    doc.text(`Report Generated: ${new Date().toLocaleString()}`, PAGE_WIDTH / 2, y, { align: 'center' });
-    y += 15;
-
-    // --- MODIFIED: Draw Score Cards Separately ---
-    // Check for specific API/Web trends and draw them individually.
-    let hasDrawnCard = false;
+    // Add Scores
     if (report.apiTrend) {
-        drawScoreCard(report.apiTrend, "API Performance (Backend)");
-        hasDrawnCard = true;
+        children.push(
+            new Paragraph({ text: `API Performance (Backend): Grade ${report.apiTrend.grade} (${report.apiTrend.score}/100) - ${report.apiTrend.direction}`, heading: HeadingLevel.HEADING_2 }),
+            new Paragraph({ text: report.apiTrend.rationale, spacing: { after: 300 } })
+        );
     }
     if (report.webTrend) {
-        drawScoreCard(report.webTrend, "Web Performance (Frontend)");
-        hasDrawnCard = true;
-    }
-    
-    // Legacy fallback if new structure isn't present
-    if (!hasDrawnCard && report.trendGrade) {
-        drawScoreCard({ 
-            grade: report.trendGrade, 
-            score: report.trendScore, 
-            direction: report.trendDirection, 
-            rationale: report.scoreRationale 
-        }, "Performance Trend");
+        children.push(
+            new Paragraph({ text: `Web Performance (Frontend): Grade ${report.webTrend.grade} (${report.webTrend.score}/100) - ${report.webTrend.direction}`, heading: HeadingLevel.HEADING_2 }),
+            new Paragraph({ text: report.webTrend.rationale, spacing: { after: 300 } })
+        );
     }
 
-    // --- NEW: Draw Grading Legend (Rubric) ---
-    drawGradingLegend();
-
-    // --- NEW: Trend Chart Capture ---
-    // Since the GUI layout is now vertical, this capture will be tall.
-    // If chartElementId is provided, we use it.
-    if (chartElementId) {
-        const chartData = await getChartImageData(chartElementId);
-        if (chartData.height > 0) {
-            // If image is very tall (vertical stacking), check page break carefully
-            checkPageBreak(chartData.height + 25);
-            y += 10;
-            drawSectionHeader('Metric Progression');
-            
-            // If the image is taller than remaining space on a FRESH page, 
-            // we might need to scale it down or just let it overflow (jsPDF doesn't auto-split images).
-            // However, 2 charts stacked usually fit on A4 if it's the main content.
-            if (chartData.height > (PAGE_HEIGHT - theme.margin * 2 - 40)) {
-                 // If too tall for a single page, scale it to fit
-                 const maxHeight = PAGE_HEIGHT - theme.margin * 2 - 40;
-                 doc.addImage(chartData.dataUrl, 'PNG', theme.margin, y, CONTENT_WIDTH, maxHeight);
-                 y += maxHeight + 10;
-            } else {
-                 doc.addImage(chartData.dataUrl, 'PNG', theme.margin, y, CONTENT_WIDTH, chartData.height);
-                 y += chartData.height + 10;
-            }
-        }
+    // Add Chart Image if available
+    if (chartImage) {
+        // Convert base64 to buffer (Uint8Array) for docx
+        const imageBuffer = Uint8Array.from(atob(chartImage.split(',')[1]), c => c.charCodeAt(0));
+        children.push(
+            new Paragraph({
+                children: [
+                    new ImageRun({
+                        data: imageBuffer,
+                        transformation: { width: 600, height: 400 },
+                    }),
+                ],
+                spacing: { before: 400, after: 400 },
+                alignment: AlignmentType.CENTER,
+            })
+        );
     }
 
-    doc.addPage();
-    y = theme.margin;
-    
-    checkPageBreak(80); // for header + table
-    drawSectionHeader("Degradation at a Glance");
-    const sortedRuns = [...runs].sort((a, b) => (Number(a.config?.users) || 0) - (Number(b.config?.users) || 0));
-    const firstRun = sortedRuns[0];
-    const lastRun = sortedRuns[sortedRuns.length - 1];
-    if (firstRun?.stats && lastRun?.stats && firstRun.id !== lastRun.id) {
-        const firstAvg = Number(firstRun.stats.avgResponseTime) || 0;
-        const lastAvg = Number(lastRun.stats.avgResponseTime) || 0;
-        const firstTput = Number(firstRun.stats.throughput) || 0;
-        const lastTput = Number(lastRun.stats.throughput) || 0;
-        const latencyDelta = firstAvg > 0 ? ((lastAvg - firstAvg) / firstAvg) * 100 : 0;
-        const tputDelta = firstTput > 0 ? ((lastTput - firstTput) / firstTput) * 100 : 0;
-        autoTable(doc, {
-            startY: y,
-            head: [['Metric', `Baseline (${firstRun.config?.users} Users)`, `Comparison (${lastRun.config?.users} Users)`, 'Change']],
-            body: [
-                ['Avg. Latency', `${firstAvg.toFixed(0)} ms`, `${lastAvg.toFixed(0)} ms`, `${latencyDelta >= 0 ? '+' : ''}${latencyDelta.toFixed(1)}%`],
-                ['Throughput', `${firstTput.toFixed(2)} req/s`, `${lastTput.toFixed(2)} req/s`, `${tputDelta >= 0 ? '+' : ''}${tputDelta.toFixed(1)}%`]
-            ],
-            theme: 'grid',
-            // Stretch table to fit width properly
-            margin: { left: theme.margin, right: theme.margin },
-            tableWidth: 'auto',
-            styles: { cellPadding: 3 }
-        });
-        y = (doc as any).lastAutoTable.finalY + 5;
-    }
+    // Sections
+    children.push(
+        new Paragraph({ text: "Overall Trend Summary", heading: HeadingLevel.HEADING_2 }),
+        new Paragraph({ text: report.overallTrendSummary || "N/A", spacing: { after: 300 } }),
 
-    const summaryHeight = calculateTextBlockHeight(report.overallTrendSummary || 'N/A', { isQuote: true });
-    drawSectionHeader('Overall Trend Summary', summaryHeight);
-    drawTextBlock(report.overallTrendSummary || 'N/A', { isQuote: true, bgColor: theme.colors.summaryBg, borderColor: theme.colors.primary });
-    
-    const thresholdHeight = calculateTextBlockHeight(report.performanceThreshold || 'N/A', { bgColor: theme.colors.warningBg });
-    drawSectionHeader('Performance Threshold', thresholdHeight);
-    drawTextBlock(report.performanceThreshold || 'N/A', { bgColor: theme.colors.warningBg, borderColor: theme.colors.warningBorder, textColor: theme.colors.warningText });
-    
-    // Visual Summary Grid
-    const cardHeight = 85; 
-    checkPageBreak(24 + cardHeight + 5);
-    drawSectionHeader('Visual Summary');
-    const cardWidth = (CONTENT_WIDTH - 5) / 2;
-    
-    let cardX = theme.margin;
-    for (let i = 0; i < sortedRuns.length; i++) {
-        checkPageBreak(cardHeight + 5);
-        cardX = (i % 2 === 0) ? theme.margin : theme.margin + cardWidth + 5;
-        drawTrendRunCard(sortedRuns[i], cardX, y, cardWidth, cardHeight);
-        if (i % 2 !== 0 || i === sortedRuns.length - 1) { 
-            y += cardHeight + 5; 
-        }
-    }
-    
-    doc.addPage();
-    y = theme.margin;
-    const obsHeight = (report.keyObservations?.length || 0) * 15;
-    checkPageBreak(24 + obsHeight);
-    drawSectionHeader('Key Observations');
-    (report.keyObservations ?? []).forEach((obs, i) => {
-        const text = `${i + 1}. ${obs}`;
-        const lines = doc.splitTextToSize(text, CONTENT_WIDTH - 5);
-        checkPageBreak(lines.length * LINE_HEIGHT + 4);
-        doc.setFontSize(theme.fontSizes.body);
-        doc.text(lines, theme.margin + 5, y, {});
-        y += lines.length * LINE_HEIGHT + 2;
+        new Paragraph({ text: "Performance Threshold", heading: HeadingLevel.HEADING_2 }),
+        new Paragraph({ text: report.performanceThreshold || "N/A", spacing: { after: 300 } }),
+
+        new Paragraph({ text: "Key Observations", heading: HeadingLevel.HEADING_2 })
+    );
+
+    (report.keyObservations ?? []).forEach(obs => {
+        children.push(new Paragraph({ text: obs, bullet: { level: 0 } }));
     });
+    children.push(new Paragraph({ text: "", spacing: { after: 300 } }));
 
-    // --- MODIFIED: Separated Root Cause and Recommendations ---
-    const causeHeight = calculateTextBlockHeight(report.rootCauseSuggestion || 'N/A');
-    drawSectionHeader('Suggested Root Cause', causeHeight);
-    drawTextBlock(report.rootCauseSuggestion || 'N/A');
-    
-    y += 10; // Explicit spacing gap
+    children.push(
+        new Paragraph({ text: "Suggested Root Cause", heading: HeadingLevel.HEADING_2 }),
+        new Paragraph({ text: report.rootCauseSuggestion || "N/A", spacing: { after: 300 } }),
 
-    // Recommendations Header
-    const recsHeaderHeight = 24;
-    checkPageBreak(recsHeaderHeight + 20);
-    doc.setFontSize(theme.fontSizes.h1); 
-    doc.setFont('helvetica', 'bold'); 
-    doc.setTextColor(theme.colors.textDark);
-    doc.text('Recommendations', theme.margin, y);
-    y += 6;
-    doc.setDrawColor(theme.colors.border);
-    doc.line(theme.margin, y, PAGE_WIDTH - theme.margin, y);
-    y += 8;
+        new Paragraph({ text: "Recommendations", heading: HeadingLevel.HEADING_2 })
+    );
 
-    (report.recommendations ?? []).forEach((rec, i) => {
-        const text = `${i + 1}. ${rec}`;
-        const lines = doc.splitTextToSize(text, CONTENT_WIDTH - 5);
-        checkPageBreak(lines.length * LINE_HEIGHT + 4);
-        doc.setFontSize(theme.fontSizes.body);
-        doc.setTextColor(theme.colors.text);
-        doc.text(lines, theme.margin + 5, y, {});
-        y += lines.length * LINE_HEIGHT + 2;
+    (report.recommendations ?? []).forEach(rec => {
+        children.push(new Paragraph({ text: rec, bullet: { level: 0 } }));
     });
+    children.push(new Paragraph({ text: "", spacing: { after: 300 } }));
 
     if (report.conclusiveSummary) {
-        const conclusiveSummaryHeight = calculateTextBlockHeight(report.conclusiveSummary, { bgColor: theme.colors.conclusiveBg });
-        drawSectionHeader('Conclusive Summary', conclusiveSummaryHeight);
-        drawTextBlock(report.conclusiveSummary, { bgColor: theme.colors.conclusiveBg, borderColor: theme.colors.conclusiveBorder, textColor: theme.colors.textDark });
+        children.push(
+            new Paragraph({ text: "Conclusive Summary", heading: HeadingLevel.HEADING_2 }),
+            new Paragraph({ text: report.conclusiveSummary, spacing: { after: 300 } })
+        );
     }
 
-    doc.addPage();
-    y = theme.margin;
-    drawSectionHeader('Analyzed Test Runs Data');
-    autoTable(doc, {
-        startY: y,
-        head: [['Load Profile', 'Avg Latency', 'Max Latency', 'Throughput', 'Error Rate', 'Total Requests', 'Error Count']],
-        body: sortedRuns.map(run => {
-            const config: Partial<LoadTestConfig> = run.config || {};
-            const stats = run.stats;
-            if (!stats) return ['Data Missing', '-', '-', '-', '-', '-', '-'];
-            
-            const totalRequests = Number(stats.totalRequests) || 0;
-            const errorCount = Number(stats.errorCount) || 0;
-            const errorRate = totalRequests > 0 ? (errorCount / totalRequests) * 100 : 0;
-            const isIterationMode = config.runMode === 'iterations';
-            const profileText = isIterationMode 
-                ? `${(Number(config.iterations) || 0).toLocaleString()} iter. @ ${config.users ?? 'N/A'} users` 
-                : `${config.users ?? 'N/A'} users @ ${config.duration ?? 'N/A'}s`;
-            
-            return [
-                profileText, 
-                `${(Number(stats.avgResponseTime) || 0).toFixed(0)} ms`,
-                `${(Number(stats.maxResponseTime) || 0).toFixed(0)} ms`,
-                `${(Number(stats.throughput) || 0).toFixed(2)} req/s`,
-                `${errorRate.toFixed(1)} %`,
-                totalRequests.toLocaleString(),
-                errorCount.toLocaleString()
-            ];
+    // Data Table
+    children.push(new Paragraph({ text: "Analyzed Test Runs Data", heading: HeadingLevel.HEADING_2, spacing: { after: 200 } }));
+
+    const tableRows = [
+        new TableRow({
+            children: ["Type", "Load Profile", "Avg Latency", "Max Latency", "Throughput", "Error Rate"].map(text => 
+                new TableCell({ children: [new Paragraph({ text, bold: true })], width: { size: 16, type: WidthType.PERCENTAGE } })
+            )
         }),
-        theme: 'grid',
-        // Stretch table to fit width properly
-        margin: { left: theme.margin, right: theme.margin },
-        tableWidth: 'auto',
-        styles: { cellPadding: 3 }
-    });
-    
-    // Page Numbering
-    const pageCount = doc.internal.pages.length - 1;
-    for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(theme.fontSizes.small);
-        doc.setTextColor(theme.colors.textLight);
-        doc.text(`Page ${i} of ${pageCount}`, PAGE_WIDTH - theme.margin, PAGE_HEIGHT - 10, { align: 'right' });
-    }
+        ...sortedRuns.map(run => {
+            const config = (run.config || {}) as Partial<LoadTestConfig>;
+            const stats = run.stats;
+            const isApi = config.method !== 'GET' && config.method !== 'HEAD';
+            const type = isApi ? 'API' : 'Web';
+            const profile = config.runMode === 'iterations' 
+                ? `${(Number(config.iterations) || 0).toLocaleString()} iter.` 
+                : `${config.users} users @ ${config.duration}s`;
+            
+            const avgLat = stats ? `${Number(stats.avgResponseTime).toFixed(0)} ms` : '-';
+            const maxLat = stats ? `${Number(stats.maxResponseTime).toFixed(0)} ms` : '-';
+            const tput = stats ? `${Number(stats.throughput).toFixed(2)}/s` : '-';
+            const errRate = stats && stats.totalRequests > 0 
+                ? `${((Number(stats.errorCount) / Number(stats.totalRequests)) * 100).toFixed(1)}%` 
+                : '0.0%';
 
-    doc.save(`Trend_Analysis_Report_${new Date().toISOString().split('T')[0]}.pdf`);
+            return new TableRow({
+                children: [type, profile, avgLat, maxLat, tput, errRate].map(text => 
+                    new TableCell({ children: [new Paragraph({ text })] })
+                )
+            });
+        })
+    ];
+
+    children.push(new Table({
+        rows: tableRows,
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        borders: {
+            top: { style: BorderStyle.SINGLE, size: 1 },
+            bottom: { style: BorderStyle.SINGLE, size: 1 },
+            left: { style: BorderStyle.SINGLE, size: 1 },
+            right: { style: BorderStyle.SINGLE, size: 1 },
+            insideHorizontal: { style: BorderStyle.SINGLE, size: 1 },
+            insideVertical: { style: BorderStyle.SINGLE, size: 1 },
+        }
+    }));
+
+    const docxDocument = new Document({
+        sections: [{
+            children: children,
+        }],
+    });
+
+    const blob = await Packer.toBlob(docxDocument);
+    triggerDownload(blob, `Trend_Analysis_Report_${new Date().toISOString().split('T')[0]}.docx`);
 };
