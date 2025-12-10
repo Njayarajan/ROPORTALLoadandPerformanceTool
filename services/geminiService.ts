@@ -520,11 +520,12 @@ export async function getAnalysis(config: LoadTestConfig, stats: TestStats): Pro
     `;
 
     const response = await client.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-pro-preview',
       contents: userPrompt,
       config: {
         systemInstruction,
         responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 32768 },
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -646,11 +647,12 @@ export async function getFailureAnalysis(config: LoadTestConfig, stats: TestStat
     `;
     
     const response = await client.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-pro-preview',
       contents: userPrompt,
       config: {
         systemInstruction,
         responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 32768 },
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -828,11 +830,12 @@ export async function getTrendAnalysis(runs: TestRunSummary[]): Promise<TrendAna
     `;
     
     const response = await client.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-pro-preview',
       contents: userPrompt,
       config: {
         systemInstruction,
         responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 32768 },
         responseSchema: trendAnalysisSchema
       }
     });
@@ -905,11 +908,12 @@ export async function refineTrendAnalysis(
         `;
 
         const response = await client.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3-pro-preview',
             contents: userPrompt,
             config: {
                 systemInstruction,
                 responseMimeType: "application/json",
+                thinkingConfig: { thinkingBudget: 32768 },
                 responseSchema: trendAnalysisSchema
             }
         });
@@ -958,11 +962,12 @@ export async function getComparisonAnalysis(runA: TestRun, runB: TestRun): Promi
     `;
 
     const response = await client.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-pro-preview',
       contents: userPrompt,
       config: {
         systemInstruction,
         responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 32768 },
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -1003,11 +1008,12 @@ export async function generateConfigFromPrompt(prompt: string, apiSpec: any): Pr
     const systemInstruction = "You are an expert QA engineer. Extract load test configuration from the user's natural language prompt and the provided OpenAPI spec.";
     
     const response = await client.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-pro-preview',
         contents: `Prompt: ${prompt}\n\nAPI Spec Snippet (Paths): ${JSON.stringify(apiSpec?.paths ? Object.keys(apiSpec.paths).slice(0, 20) : [])}`, // Sending limited spec context
         config: {
             systemInstruction,
             responseMimeType: "application/json",
+            thinkingConfig: { thinkingBudget: 32768 },
             responseSchema: {
                 type: Type.OBJECT,
                 properties: {
@@ -1068,6 +1074,15 @@ async function validateRequest(url: string, method: string, body: string, header
     }
 }
 
+// Helper to get specific endpoint def
+function getEndpointDefinition(apiSpec: any, path: string, method: string) {
+    // Normalizing path and method to match spec keys usually requires some fuzzy matching or exact match
+    // The app passes exact matches from the UI selection hopefully.
+    const p = apiSpec.paths?.[path];
+    if (!p) return null;
+    return p[method.toLowerCase()];
+}
+
 export async function generateAndValidateBody(
     apiSpec: any,
     path: string,
@@ -1090,25 +1105,93 @@ export async function generateAndValidateBody(
 
     onLog(`Target: ${method} ${fullUrl}`);
 
+    // Context Preparation
+    const endpointDef = getEndpointDefinition(apiSpec, path, method);
+    const schemas = apiSpec.components?.schemas || {};
+    
+    // Create a context object string
+    const contextStr = JSON.stringify({
+        endpoint: {
+            path,
+            method,
+            definition: endpointDef
+        },
+        // We provide all schemas so the LLM can resolve $refs
+        components: { schemas }
+    }, null, 2);
+
+    const systemInstruction = `
+You are an expert API Integration Engineer. Your task is to generate a VALID JSON request body for an API endpoint based *strictly* on its OpenAPI definition.
+
+Rules:
+1. **Strict Schema Adherence**: You must follow the provided OpenAPI schema definitions exactly. Pay attention to field names (case-sensitivity), data types (string, boolean, array, object), and nesting.
+2. **Required Fields**: Ensure ALL required fields defined in the schema are present.
+3. **Data Quality**: Generate realistic, valid dummy data.
+   - For UUIDs, use valid UUID format.
+   - For dates, use ISO 8601 format (YYYY-MM-DDTHH:mm:ss.sssZ).
+   - For emails, use example.com addresses.
+4. **Error Correction**: If a previous attempt failed, carefully analyze the error message.
+   - "The X field is required" means you missed a field or nested it incorrectly.
+   - "Malformed data" often means the JSON structure doesn't match the DTO expected by the server (e.g., sending an object where an array is expected, or vice versa).
+5. **Output**: Return ONLY the raw JSON string. Do not wrap in markdown code blocks like \`\`\`json.
+`;
+
     while (attempts < maxAttempts) {
         if (signal.aborted) throw new AutoFixStoppedError("Stopped by user", currentBody);
         attempts++;
         onLog(`Attempt ${attempts}/${maxAttempts}: Generating payload...`);
 
-        const prompt = attempts === 1 
-            ? `Generate a valid JSON request body for ${method} ${path} based on the OpenAPI spec. Focus: ${formFocus}. Instructions: ${instructions}`
-            : `The previous payload failed validation.\nPayload: ${currentBody}\nError: ${lastError}\n\nFix the payload JSON based on the error.`;
+        let userPrompt = "";
+        
+        if (attempts === 1) {
+            userPrompt = `
+Generate a JSON body for ${method.toUpperCase()} ${path}.
+
+Instructions: ${instructions || "Generate a complete, valid payload."}
+
+API Definition & Schemas:
+${contextStr}
+            `;
+        } else {
+            userPrompt = `
+The previous payload failed validation.
+
+**Previous Payload:**
+${currentBody}
+
+**Server Error:**
+${lastError}
+
+**Task:**
+1. Analyze why the server rejected the payload based on the Error and the Schema.
+2. Fix the JSON. Check for:
+   - Missing required fields.
+   - Incorrect nesting (e.g. is 'FormData' at the root?).
+   - Incorrect casing (PascalCase vs camelCase).
+   - Invalid data types.
+
+API Definition & Schemas (Reference):
+${contextStr}
+            `;
+        }
 
         const response = await client.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt, // Ideally include schema context here
+            model: 'gemini-3-pro-preview', // Upgraded model for reasoning
+            contents: userPrompt,
             config: {
-                responseMimeType: "application/json"
+                systemInstruction,
+                responseMimeType: "application/json", // Force JSON output
+                thinkingConfig: { thinkingBudget: 32768 }, // Max thinking budget for deep reasoning
             }
         });
         
         currentBody = response.text;
-        onLog(`Generated: ${currentBody.substring(0, 100)}...`);
+        // Strip code blocks just in case, though mimeType usually handles it
+        if (currentBody.startsWith('```')) {
+             currentBody = currentBody.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
+        }
+
+        onLog(`Generated: ${currentBody.substring(0, 150)}...`);
 
         onLog(`Validating against API...`);
         const validation = await validateRequest(fullUrl, method, currentBody, headers, authToken, useCorsProxy);
@@ -1118,12 +1201,23 @@ export async function generateAndValidateBody(
             saveSuccessfulPayload(path, method, currentBody).catch(console.warn);
             return currentBody;
         } else {
-            lastError = `Status ${validation.status}: ${validation.responseText.substring(0, 500)}`; // Truncate error
-            onLog(`Validation Failed: ${lastError}`);
+            // Improve error logging for the LLM
+            let cleanError = validation.responseText;
+            try {
+                // If error is JSON, try to format it for better LLM readability
+                const errObj = JSON.parse(cleanError);
+                cleanError = JSON.stringify(errObj, null, 2);
+            } catch (e) {}
+            
+            lastError = `Status ${validation.status}: ${cleanError}`;
+            // Truncate extremely long errors to avoid token limit issues, but keep enough context
+            if (lastError.length > 2000) lastError = lastError.substring(0, 2000) + "... [truncated]";
+            
+            onLog(`Validation Failed: ${lastError.substring(0, 200)}...`);
         }
     }
     
-    throw new AutoFixStoppedError(`Failed to generate valid payload after ${maxAttempts} attempts. Last error: ${lastError}`, currentBody);
+    throw new AutoFixStoppedError(`Failed to generate valid payload after ${maxAttempts} attempts.`, currentBody);
 }
 
 export async function generateAndValidatePersonalizedData(
@@ -1153,10 +1247,14 @@ export async function generateAndValidatePersonalizedData(
         Instructions: ${instructions}
     `;
     
+    // Use Gemini 3.0 Pro with high thinking budget for the critical sample generation
     const response = await client.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-pro-preview',
         contents: prompt,
-        config: { responseMimeType: "application/json" }
+        config: { 
+            responseMimeType: "application/json",
+            thinkingConfig: { thinkingBudget: 32768 }
+        }
     });
     
     const generatedSampleArray = JSON.parse(response.text);
@@ -1182,10 +1280,14 @@ export async function generateAndValidatePersonalizedData(
             Generate ${Math.min(req.count, 50)} unique JSON records for ${req.formType}.
             Output as a JSON array.
         `;
+        // Also upgrade batch generation to use 3.0 Pro for consistency and intelligence
         const batchResp = await client.models.generateContent({
-             model: 'gemini-2.5-flash',
+             model: 'gemini-3-pro-preview',
              contents: batchPrompt,
-             config: { responseMimeType: "application/json" }
+             config: { 
+                 responseMimeType: "application/json",
+                 thinkingConfig: { thinkingBudget: 32768 }
+             }
         });
         const batchData = JSON.parse(batchResp.text);
         if (Array.isArray(batchData)) {
